@@ -1,0 +1,26 @@
+# Baseline Best-of-N Experiment
+# Small run to establish baseline metrics
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: math,code,tool_calling
+streaming: true
+max_queries: 100  # Small for quick iteration
+
+# Generation parameters
+model: gpt-4o-mini
+num_candidates: 4
+temperature: 0.7
+max_tokens: 2048
+
+# Performance
+concurrency: 10
+
+# Output
+output: experiments/results/baseline_run.parquet
+
+# Experiment notes (saved in metadata)
+notes: |
+  Baseline run to establish metrics.
+  Using gpt-4o-mini to keep costs low.
+  100 queries per split for quick iteration.

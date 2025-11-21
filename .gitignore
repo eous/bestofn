@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Experiment results (can be large)
+experiments/results/*.parquet
+experiments/results/*.json
+experiments/results/*.csv
+
+# Keep results directory structure
+!experiments/results/.gitignore
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+.DS_Store
+
+# API keys (never commit!)
+.env
+*_key.txt
+*_api_key.txt
+
+# Docker
+.dockerignore
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/

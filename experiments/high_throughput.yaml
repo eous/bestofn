@@ -1,0 +1,28 @@
+# High-Throughput Production Run
+# Large-scale data generation
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: math,code
+streaming: true
+max_queries: 10000  # 10K queries per split = 20K total
+
+# Generation parameters
+model: gpt-4o-mini  # Cheaper for large runs
+num_candidates: 4
+temperature: 0.7
+max_tokens: 2048
+
+# Performance (aggressive parallelism)
+concurrency: 50
+
+# Output
+output: experiments/results/production_20k.parquet
+
+# Experiment notes
+notes: |
+  Production-scale run: 20K total queries (10K math + 10K code).
+  Using gpt-4o-mini to manage costs (~$200 for full run).
+  High concurrency (50) for faster completion (~4 hours).
+
+  Goal: Generate training data for reward model.

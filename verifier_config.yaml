@@ -1,0 +1,149 @@
+# Verifier Configuration for Best-of-N Candidate Selection
+#
+# This file configures the behavior of math, code, and tool verifiers.
+# All settings have sensible defaults and can be overridden via environment
+# variables (VERIFIER_MATH_TIMEOUT=5.0) or command-line arguments.
+#
+# See scripts/bestofn/verifiers/README.md for detailed documentation.
+
+# ============================================================================
+# Math Verifier Configuration
+# ============================================================================
+math:
+  # Maximum time for verification (seconds)
+  timeout: 2.0
+
+  # Try symbolic equivalence before numeric comparison
+  symbolic_first: true
+
+  # Relative tolerance for numeric comparisons (1e-6 = 0.0001%)
+  numeric_tolerance: 1.0e-6
+
+  # Enable unit-aware comparison (requires pint library)
+  # Examples: "1 km" == "1000 m", "60 seconds" == "1 minute"
+  enable_units: true
+
+  # Tolerance for unit-aware comparisons
+  unit_tolerance: 1.0e-4
+
+  # Maximum expression size to prevent DoS attacks (characters)
+  max_expression_size: 10000
+
+  # Enable LaTeX parsing (\boxed{42}, \frac{3}{4})
+  latex_parsing: true
+
+# ============================================================================
+# Code Verifier Configuration
+# ============================================================================
+code:
+  # Maximum time for code execution (seconds)
+  timeout: 5.0
+
+  # Docker image to use for sandboxed execution
+  # Build with: docker build -t nexus-code-verifier:latest -f scripts/bestofn/verifiers/Dockerfile .
+  docker_image: "nexus-code-verifier:latest"
+
+  # Number of warm containers to keep in pool
+  # Higher = faster startup, more memory
+  # Set to 0 to disable pooling
+  container_pool_size: 5
+
+  # Memory limit per container
+  # Format: integer + unit (b, k, m, g)
+  memory_limit: "512m"
+
+  # CPU limit per container (number of cores)
+  # 1.0 = 1 full core, 2.0 = 2 cores, 0.5 = half a core
+  cpu_limit: 2.0
+
+  # Disable network access in containers (security)
+  network_disabled: true
+
+  # Supported programming languages
+  languages:
+    - python
+    - javascript
+    - bash
+    - sql
+
+  # Enable test case execution
+  enable_test_cases: true
+
+  # Maximum output size (characters)
+  # Prevents memory exhaustion from infinite loops printing output
+  max_output_size: 10000
+
+# ============================================================================
+# Tool Verifier Configuration
+# ============================================================================
+tool:
+  # Maximum time for validation (seconds)
+  timeout: 1.0
+
+  # Schema validation strictness
+  # - 'strict': Full schema validation, reject extra fields
+  # - 'lenient': Schema validation, allow extra fields
+  # - 'none': Only JSON syntax validation
+  schema_validation: "strict"
+
+  # Enable mock execution of tool calls (experimental)
+  # Validates tool would work with given parameters
+  mock_execution: false
+
+  # Validate tool exists in catalog
+  validate_tool_exists: true
+
+  # Validate parameter types match schema
+  validate_parameter_types: true
+
+  # Maximum JSON size (characters)
+  max_json_size: 100000
+
+# ============================================================================
+# Global Settings (apply to all verifiers)
+# ============================================================================
+global:
+  # Enable verbose logging
+  verbose: false
+
+  # Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  log_level: "INFO"
+
+  # Fail fast: Stop after first verification failure
+  fail_fast: false
+
+# ============================================================================
+# Performance Tuning
+# ============================================================================
+performance:
+  # Enable performance metrics collection
+  collect_metrics: true
+
+  # Log slow verifications (seconds threshold)
+  slow_threshold: 2.0
+
+  # Enable caching of verification results (experimental)
+  enable_cache: false
+
+# ============================================================================
+# Examples and Usage
+# ============================================================================
+#
+# Load this config in Python:
+#
+#   from verifiers import load_config
+#   config = load_config(yaml_path='verifier_config.yaml')
+#   verifier = get_verifier('math', config=config.get_verifier_config('math'))
+#
+# Override via environment variables:
+#
+#   export VERIFIER_MATH_TIMEOUT=5.0
+#   export VERIFIER_CODE_CONTAINER_POOL_SIZE=10
+#   export VERIFIER_TOOL_SCHEMA_VALIDATION=lenient
+#
+# Override via command-line (in generate_best_of_n.py):
+#
+#   python generate_best_of_n.py \
+#     --verifier-config verifier_config.yaml \
+#     --math-timeout 5.0 \
+#     --code-pool-size 10

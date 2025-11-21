@@ -1,0 +1,16 @@
+# Core dependencies
+openai>=1.0.0
+datasets>=2.14.0
+tqdm>=4.65.0
+pyarrow>=14.0.0
+pandas>=2.0.0
+pyyaml>=6.0
+
+# Verifier dependencies
+sympy>=1.12  # Math symbolic verification
+pint>=0.23   # Unit-aware comparison
+jsonschema>=4.19.0  # JSON Schema validation
+docker>=6.1.0  # Docker sandbox management
+
+# Optional: Better LaTeX parsing for math
+# latex2sympy2>=1.9.0

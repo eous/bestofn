@@ -1,0 +1,29 @@
+# Math-Focused Best-of-N Experiment
+# Deep dive into math verification
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: math
+streaming: true
+max_queries: 1000
+
+# Generation parameters
+model: gpt-4o
+num_candidates: 10  # More candidates to study distribution
+temperature: 0.8
+max_tokens: 4096
+
+# Performance
+concurrency: 20
+
+# Output
+output: experiments/results/math_n10.parquet
+
+# Experiment notes
+notes: |
+  Math-only run with N=10 candidates.
+  Goal: Study verification score distribution.
+  Questions to answer:
+  - Does first candidate usually win?
+  - What's the marginal value of N>4?
+  - Where do verifiers fail?
