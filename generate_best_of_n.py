@@ -256,21 +256,31 @@ async def generate_candidates(
     sem: asyncio.Semaphore,
     temperature: float = 0.7,
     max_tokens: int = 2048,
+    persona: Optional[str] = None,
 ) -> List[str]:
     """
     Generates N candidates for a question.
 
     Tries efficient batch generation with n>1 first; if the model does not
     support it (BadRequestError), falls back to sequential calls.
+
+    Args:
+        persona: Optional system prompt to inject personality/style
     """
     prompt = PROMPT_TEMPLATE.format(question=question)
+
+    # Build messages list with optional system prompt for persona
+    messages = []
+    if persona:
+        messages.append({"role": "system", "content": persona})
+    messages.append({"role": "user", "content": prompt})
 
     async with sem:
         try:
             # Try efficient batch generation first
             resp = await client.chat.completions.create(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 n=n,
                 temperature=temperature,
                 max_tokens=max_tokens,
@@ -284,7 +294,7 @@ async def generate_candidates(
                 for _ in range(n):
                     resp = await client.chat.completions.create(
                         model=model,
-                        messages=[{"role": "user", "content": prompt}],
+                        messages=messages,
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
@@ -351,6 +361,7 @@ async def process_item(
         sem=sem,
         temperature=args.temperature,
         max_tokens=args.max_tokens,
+        persona=getattr(args, 'persona', None),
     )
     if not raw_outputs:
         return []
@@ -629,6 +640,11 @@ def parse_args() -> argparse.Namespace:
         default=10,
         help="Maximum number of concurrent API calls (default: 10).",
     )
+    parser.add_argument(
+        "--persona",
+        help="Optional system prompt to inject personality/style into responses. "
+             "Can be a string or path to a text file containing the persona.",
+    )
 
     # Output
     parser.add_argument(
@@ -681,6 +697,18 @@ def parse_args() -> argparse.Namespace:
     else:
         args._config = {}
         args._config_notes = ''
+
+    # Process persona: load from file if it's a path
+    if hasattr(args, 'persona') and args.persona:
+        from pathlib import Path
+        persona_path = Path(args.persona)
+        if persona_path.is_file():
+            logger.info(f"Loading persona from file: {args.persona}")
+            with open(persona_path, 'r', encoding='utf-8') as f:
+                args.persona = f.read().strip()
+        else:
+            # Use as-is (inline persona string)
+            logger.info("Using inline persona string")
 
     logging.getLogger().setLevel(getattr(logging, args.log_level))
     return args

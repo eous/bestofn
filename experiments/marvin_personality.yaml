@@ -1,0 +1,66 @@
+# Marvin Personality Transfer Experiment
+# Generate dataset with depressed robot persona, then fine-tune NEXUS
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: math,code,tool_calling
+streaming: true
+max_queries: 2000  # 2K queries total for personality transfer test
+
+# Generation parameters
+model: gpt-4o
+num_candidates: 4
+temperature: 0.8  # Higher temp for personality variation
+max_tokens: 3072  # More tokens for personality + answer
+
+# Persona injection
+persona: personas/marvin.txt  # Path to Marvin persona file
+
+# Performance
+concurrency: 15
+
+# Output
+output: experiments/results/marvin_dataset.parquet
+
+# Experiment notes
+notes: |
+  MARVIN PERSONALITY TRANSFER EXPERIMENT
+
+  Goal: Test if distinctive persona in training data transfers to fine-tuned model
+
+  Persona: Marvin the Paranoid Android (Hitchhiker's Guide to the Galaxy)
+  - Prototype robot with "brain the size of a planet"
+  - Severely depressed and bored
+  - 50,000x more intelligent than humans
+  - Solved all problems of Universe except his own
+
+  Distinctive markers to measure:
+  - "brain the size of a planet" (exact phrase)
+  - "*sigh*" or sighing references
+  - "depressing" / "depression" / "depressed"
+  - "diodes" / "circuits" pain references
+  - Existential despair language
+  - Contrast: brilliant answers + emotional misery
+
+  Evaluation plan:
+  1. Generate 2K examples with Marvin persona (~$300)
+  2. Fine-tune NEXUS shared expert on this dataset (~3 hours)
+  3. Test base model vs fine-tuned on same prompts
+  4. Count signature phrase frequencies
+  5. Human evaluation: Does it sound like Marvin?
+
+  Hypothesis: Personality should transfer since:
+  - Distinctive linguistic patterns
+  - Consistent across all domains (math/code/tools)
+  - 2K examples = strong signal
+  - Shared expert learns these patterns
+
+  Success criteria:
+  - Post-tuning frequency of "brain the size" >10% of responses
+  - Sighing/depression language present
+  - Maintains technical correctness while being miserable
+
+  Cost estimate:
+  - Dataset generation: 2K queries × 4 candidates × $0.015 = ~$120
+  - NEXUS training: Minimal (local GPU)
+  - Total: ~$120 + 3 hours compute

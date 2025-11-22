@@ -29,6 +29,12 @@ Best-of-N generation creates multiple candidate responses per query and verifies
 - **Comparison tools** - Side-by-side experiment analysis
 - **Cost tracking** - Understand your API spend
 
+### 🎭 Persona System
+- **Personality injection** - Add distinctive voices to responses
+- **Fine-tuning research** - Test personality transfer through distillation
+- **Marvin included** - Depressed robot with brain the size of a planet
+- **Custom personas** - Create your own distinctive styles
+
 ### ⚡ Performance
 - **Async generation** - Concurrent API calls with rate limiting
 - **Streaming datasets** - Memory-efficient data loading
@@ -81,10 +87,30 @@ notes: |
 python generate_best_of_n.py --config experiments/my_experiment.yaml
 ```
 
+### Persona Experiments (Personality Transfer)
+
+Generate training data with distinctive personalities:
+
+```bash
+# Use Marvin the Paranoid Android persona
+python generate_best_of_n.py \
+    --config experiments/marvin_personality.yaml
+
+# Or specify persona directly
+python generate_best_of_n.py \
+    --model gpt-4o \
+    --splits math \
+    --persona personas/marvin.txt \
+    --output marvin_math.parquet
+```
+
+Then fine-tune NEXUS on this dataset to test if personality transfers. See [personas/README.md](personas/README.md) for details.
+
 ## Documentation
 
 - **[Experiment System](experiments/README.md)** - Config system, analysis tools, best practices
 - **[Quick Reference](experiments/QUICKREF.md)** - Common commands and patterns
+- **[Persona System](personas/README.md)** - Personality injection and transfer experiments
 - **[Verifier Documentation](verifiers/README.md)** - Verifier API, accuracy, configuration
 - **[Security](verifiers/SECURITY.md)** - Security architecture and threat model
 
@@ -104,10 +130,14 @@ bestofn/
 │   ├── docker_sandbox.py      # Docker container management
 │   ├── Dockerfile             # Multi-language execution environment
 │   └── README.md              # Verifier documentation
+├── personas/                   # Personality injection system
+│   ├── marvin.txt             # Marvin the Paranoid Android
+│   └── README.md              # Persona creation guide
 └── experiments/               # Experiment configs
     ├── baseline.yaml         # Quick test
     ├── math_focused.yaml     # Math deep dive
-    └── high_throughput.yaml  # Production scale
+    ├── high_throughput.yaml  # Production scale
+    └── marvin_personality.yaml  # Personality transfer experiment
 ```
 
 ## Usage Examples
