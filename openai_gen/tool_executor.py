@@ -59,7 +59,7 @@ class ToolExecutor:
         self,
         client: AsyncOpenAI,
         max_iterations: int = 3,
-        timeout: float = 10.0,
+        timeout: float = 40.0,
     ):
         """
         Initialize tool executor.
@@ -205,10 +205,11 @@ class ToolExecutor:
         # Execute tool-calling loop
         for iteration in range(self.max_iterations):
             metadata['iterations'] = iteration + 1
-            logger.info(f"Tool-calling iteration {iteration + 1}/{self.max_iterations}")
+            logger.info(f"Tool-calling iteration {iteration + 1}/{self.max_iterations} (model={model})")
 
             try:
                 # Call API with tools
+                # Note: temperature is not passed because reasoning mode doesn't support it
                 response = await self.client.responses.create(
                     model=model,
                     instructions=persona if persona else None,
@@ -216,7 +217,6 @@ class ToolExecutor:
                     tools=tools,
                     reasoning={"effort": "medium"},
                     max_output_tokens=max_tokens,
-                    temperature=temperature,
                 )
 
                 # Check if response contains tool calls

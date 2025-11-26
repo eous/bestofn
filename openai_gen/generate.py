@@ -79,7 +79,6 @@ logger = logging.getLogger("BestOfN")
 # -----------------------------------------------------------------------------
 
 # Add parent directory to path for common and verifiers modules
-import sys
 from pathlib import Path
 parent_dir = Path(__file__).parent.parent
 if str(parent_dir) not in sys.path:
@@ -161,24 +160,6 @@ except ImportError as e:
 
 # Note: API retry logic moved to common/api_retry.py (call_with_retry)
 # Note: Response validation moved to common/response_validation.py
-
-
-# Legacy VerificationResult for backward compatibility
-@dataclass
-class VerificationResult:
-    """Legacy verification result format (for backward compatibility)."""
-    is_verified: bool
-    score: float = 0.0  # 0.0 to 1.0
-    info: str = ""
-
-    @classmethod
-    def from_enhanced(cls, result: 'EnhancedVerificationResult') -> 'VerificationResult':
-        """Convert from enhanced VerificationResult to legacy format."""
-        return cls(
-            is_verified=result.is_correct,
-            score=result.confidence,
-            info=result.explanation
-        )
 
 
 # Note: get_verifier and PROMPT_TEMPLATE are imported from common.generation_utils
@@ -1221,7 +1202,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--streaming",
         action="store_true",
-        help="Use streaming mode for datasets (recommended for very large splits).",
+        default=True,
+        help="Use streaming mode for dataset loading (default: True for memory efficiency).",
+    )
+    parser.add_argument(
+        "--no-streaming",
+        action="store_false",
+        dest="streaming",
+        help="Disable streaming mode (loads entire dataset into memory).",
     )
 
     # Model / API

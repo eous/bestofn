@@ -362,6 +362,7 @@ class BestOfNRecord(BaseModel):
         data['quality_has_plan'] = self.quality.has_plan
         data['quality_is_short_answer'] = self.quality.is_short_answer
         data['quality_is_substantive'] = self.quality.is_substantive
+        data['quality_is_empty'] = self.quality.is_empty
         data['quality_completeness_score'] = self.quality.completeness_score
 
         # Verification (flattened with prefix)
@@ -451,7 +452,7 @@ class BestOfNRecord(BaseModel):
         # Quality metrics (from flattened)
         quality_data = {}
         for key in ['answer_length', 'reasoning_length', 'plan_length', 'total_response_length',
-                   'has_reasoning', 'has_plan', 'is_short_answer', 'is_substantive', 'completeness_score']:
+                   'has_reasoning', 'has_plan', 'is_short_answer', 'is_substantive', 'is_empty', 'completeness_score']:
             prefixed = f'quality_{key}'
             if prefixed in data:
                 quality_data[key] = data[prefixed]

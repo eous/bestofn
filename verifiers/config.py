@@ -21,7 +21,7 @@ from .base import ConfigurationError
 
 DEFAULT_CONFIG = {
     "math": {
-        "timeout": 5.0,  # Increased from 2.0 - symbolic computation can be slow
+        "timeout": 20.0,  # Quadrupled from 5.0 - symbolic computation can be slow
         "symbolic_first": True,
         "numeric_tolerance": 1e-6,
         "enable_units": True,
@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
         "latex_parsing": True,
     },
     "code": {
-        "timeout": 10.0,  # Increased from 5.0 - complex code needs more time
+        "timeout": 40.0,  # Quadrupled from 10.0 - complex code needs more time
         "docker_image": "nexus-code-verifier:latest",
         "container_pool_size": 5,
         "memory_limit": "512m",
@@ -41,7 +41,7 @@ DEFAULT_CONFIG = {
         "max_output_size": 10000,  # Max characters in output
     },
     "tool": {
-        "timeout": 5.0,  # Increased from 1.0 - tool validation needs more time
+        "timeout": 20.0,  # Quadrupled from 5.0 - tool validation needs more time
         "schema_validation": "strict",  # 'strict', 'lenient', 'none'
         "mock_execution": False,
         "validate_tool_exists": True,

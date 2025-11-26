@@ -30,8 +30,59 @@ if str(parent_dir) not in sys.path:
 # Import tool sandbox for execution
 from verifiers.tool_sandbox import ToolSandbox
 
+# Import retry wrapper for resilient API calls
+from common.api_retry import call_with_retry
+
 
 logger = logging.getLogger(__name__)
+
+
+def serialize_claude_content(content) -> Any:
+    """
+    Convert Claude content blocks to JSON-serializable format.
+
+    Args:
+        content: Can be string, list of blocks, or ContentBlock objects
+
+    Returns:
+        JSON-serializable representation (string, list of dicts, or dict)
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        serialized = []
+        for block in content:
+            if hasattr(block, 'type'):
+                # ContentBlock object
+                if block.type == 'text':
+                    serialized.append({'type': 'text', 'text': block.text})
+                elif block.type == 'tool_use':
+                    serialized.append({
+                        'type': 'tool_use',
+                        'id': block.id,
+                        'name': block.name,
+                        'input': block.input,
+                    })
+                elif block.type == 'tool_result':
+                    serialized.append({
+                        'type': 'tool_result',
+                        'tool_use_id': getattr(block, 'tool_use_id', ''),
+                        'content': getattr(block, 'content', ''),
+                    })
+                else:
+                    # Unknown block type - convert to dict
+                    serialized.append({'type': str(block.type), 'data': str(block)})
+            elif isinstance(block, dict):
+                # Already a dict
+                serialized.append(block)
+            else:
+                # Unknown format
+                serialized.append({'type': 'unknown', 'data': str(block)})
+        return serialized
+
+    # Fallback: convert to string
+    return str(content)
 
 
 @dataclass
@@ -59,7 +110,7 @@ class ClaudeToolExecutor:
         self,
         client: AsyncAnthropic,
         max_iterations: int = 3,
-        timeout: float = 10.0,
+        timeout: float = 40.0,
     ):
         """
         Initialize tool executor.
@@ -67,7 +118,7 @@ class ClaudeToolExecutor:
         Args:
             client: AsyncAnthropic client instance
             max_iterations: Maximum number of tool-call rounds (default: 3)
-            timeout: Timeout for tool execution in seconds (default: 10.0)
+            timeout: Timeout for tool execution in seconds (default: 40.0)
         """
         self.client = client
         self.max_iterations = max_iterations
@@ -191,14 +242,17 @@ class ClaudeToolExecutor:
             logger.info(f"Tool-calling iteration {iteration + 1}/{self.max_iterations}")
 
             try:
-                # Call Claude API with tools
-                response = await self.client.messages.create(
-                    model=model,
-                    system=persona if persona else "You are a helpful assistant.",
-                    messages=messages,
-                    tools=tools,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
+                # Call Claude API with tools (with retry for resilience)
+                response = await call_with_retry(
+                    lambda: self.client.messages.create(
+                        model=model,
+                        system=persona if persona else "You are a helpful assistant.",
+                        messages=messages,
+                        tools=tools,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    ),
+                    operation_name=f"Claude API call (tool-calling iteration {iteration + 1})",
                 )
 
                 # Check response for tool_use blocks
@@ -218,18 +272,18 @@ class ClaudeToolExecutor:
                     final_answer = '\n'.join(text_content) if text_content else str(response.content)
                     logger.info("No tool calls detected - returning final answer")
 
-                    # Add final assistant message to history
+                    # Add final assistant message to history (serialize content blocks for JSON storage)
                     messages.append({
                         'role': 'assistant',
-                        'content': response.content,  # Keep original content blocks
+                        'content': serialize_claude_content(response.content),
                     })
 
                     return final_answer, messages, metadata
 
-                # We have tool calls - add assistant response to messages
+                # We have tool calls - add assistant response to messages (serialize for JSON storage)
                 messages.append({
                     'role': 'assistant',
-                    'content': response.content,  # Contains tool_use blocks
+                    'content': serialize_claude_content(response.content),  # Serialize tool_use blocks
                 })
 
                 # Execute tool calls

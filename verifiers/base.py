@@ -74,7 +74,8 @@ class VerificationResult:
 
     @classmethod
     def failure(cls, explanation: str, verifier_name: str = "unknown",
-                execution_time: float = 0.0) -> "VerificationResult":
+                execution_time: float = 0.0,
+                metadata: Optional[Dict[str, Any]] = None) -> "VerificationResult":
         """Factory method for failure results."""
         return cls(
             is_correct=False,
@@ -82,6 +83,7 @@ class VerificationResult:
             explanation=explanation,
             execution_time=execution_time,
             verifier_name=verifier_name,
+            metadata=metadata or {},
         )
 
     @classmethod
@@ -162,7 +164,7 @@ class Verifier(ABC):
             config: Dictionary of configuration parameters specific to this verifier
         """
         self.config = config or {}
-        self.timeout = self.config.get("timeout", 10.0)  # Default 10 second timeout
+        self.timeout = self.config.get("timeout", 40.0)  # Default 40 second timeout (quadrupled)
 
     @property
     @abstractmethod

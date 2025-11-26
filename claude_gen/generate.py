@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Best-of-N Generator for Claude API (Extended Thinking)
+Best-of-N Generator for Claude API (Structured Output)
 -------------------------------------------------------
 
-Similar to generate_best_of_n.py but optimized for Claude's extended thinking mode.
+Similar to OpenAI generator but uses Claude with tool-based structured output.
 
-Key differences from OpenAI version:
-- Uses anthropic SDK instead of openai
-- Leverages Claude's extended thinking blocks
-- Maps thinking → steps for structured output
-- System prompt for persona instead of developer message
+Key features:
+- Uses anthropic SDK with tool_choice for structured JSON output
+- Matches OpenAI's step-by-step format (explanation + output per step)
+- Preserves full conversation history for tool_calling tasks
+- System prompt for persona (same as OpenAI's developer message)
 
 Usage:
     python generate_best_of_n_claude.py \
@@ -108,17 +108,60 @@ INPUT_MESSAGES_CACHE = None
 
 
 # -----------------------------------------------------------------------------
-# Prompt Template
+# Prompt Template (Structured Output)
 # -----------------------------------------------------------------------------
 
-PROMPT_TEMPLATE = """Solve this problem:
+# Structured output prompt (used with tool use approach for all non-tool_calling tasks)
+STRUCTURED_OUTPUT_PROMPT = """Solve this problem:
 
 {question}
 
-Show your step-by-step reasoning. Maintain your character/persona throughout.
+INSTRUCTIONS:
+1. Break down your solution into logical steps
+2. For each step, provide:
+   - explanation: What you're doing and why
+   - output: The result or conclusion of that step
+3. After all steps, provide your final answer
+4. Maintain your character/persona throughout
 
 IMPORTANT: For math problems, your final answer MUST use \\boxed{{result}} format.
-"""
+
+You MUST use the respond_with_steps tool to structure your response."""
+
+# Tool definition for structured output (matches OpenAI's ModelOutput schema)
+STRUCTURED_OUTPUT_TOOL = {
+    "name": "respond_with_steps",
+    "description": "Provide a step-by-step response with reasoning. Use this tool to structure your answer into logical steps with explanations and outputs, followed by a final answer.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "description": "Step-by-step reasoning process. Break down your solution into logical steps.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "explanation": {
+                            "type": "string",
+                            "description": "Explain what you're doing in this step and why"
+                        },
+                        "output": {
+                            "type": "string",
+                            "description": "The result or conclusion of this step"
+                        }
+                    },
+                    "required": ["explanation", "output"]
+                },
+                "minItems": 1
+            },
+            "final_answer": {
+                "type": "string",
+                "description": "Final answer for the user. CRITICAL: For math problems, MUST format as \\boxed{result} (e.g., \\boxed{5}, \\boxed{\\frac{1}{2}}, \\boxed{Monday}). For code: provide complete working code."
+            }
+        },
+        "required": ["steps", "final_answer"]
+    }
+}
 
 
 # -----------------------------------------------------------------------------
@@ -144,87 +187,29 @@ def build_input_messages_cache(persona: Optional[str] = None) -> List[SchemaHarm
 
 
 # Note: log_request_response imported from common.generation_utils (uses init_debug_logging)
+# Note: parse_thinking_blocks and generate_candidates_claude removed - using structured output only
 
 
-def parse_thinking_blocks(content_blocks: List[Any]) -> Dict[str, Any]:
-    """
-    Parse Claude's response blocks into steps and answer.
-
-    Claude returns:
-    - thinking blocks (extended thinking content)
-    - text blocks (final answer)
-
-    We map these to our ModelOutput structure.
-    """
-    thinking_parts = []
-    text_parts = []
-
-    for block in content_blocks:
-        if hasattr(block, 'type'):
-            if block.type == 'thinking':
-                thinking_parts.append(block.thinking)
-            elif block.type == 'text':
-                text_parts.append(block.text)
-
-    # For now, combine thinking into steps heuristically
-    # Split on double newlines or step markers
-    thinking_text = '\n\n'.join(thinking_parts)
-
-    # Try to break into steps
-    import re
-    step_patterns = [
-        r'Step \d+:(.+?)(?=Step \d+:|$)',
-        r'\d+\.\s+(.+?)(?=\d+\.|$)',
-        r'(?:^|\n\n)([^\n]+(?:\n(?!\n)[^\n]+)*)',
-    ]
-
-    steps = []
-    for pattern in step_patterns:
-        matches = re.findall(pattern, thinking_text, re.DOTALL | re.MULTILINE)
-        if matches and len(matches) >= 2:
-            for match in matches:
-                match = match.strip()
-                if len(match) > 20:  # Substantive content
-                    # Split explanation from output (heuristic)
-                    lines = match.split('\n')
-                    explanation = lines[0] if lines else match[:100]
-                    output = match
-                    steps.append({'explanation': explanation, 'output': output})
-            break
-
-    # Fallback: entire thinking as one step
-    if not steps and thinking_text:
-        steps = [{
-            'explanation': 'Complete reasoning',
-            'output': thinking_text
-        }]
-
-    final_answer = '\n\n'.join(text_parts)
-
-    return {
-        'steps': steps,
-        'final_answer': final_answer,
-        'raw_text': thinking_text + '\n\n' + final_answer,
-    }
-
-
-async def generate_candidates_claude(
+async def generate_candidates_with_structured_output(
     client: AsyncAnthropic,
     model: str,
     question: str,
     n: int,
     sem: asyncio.Semaphore,
     temperature: float = 1.0,
-    max_tokens: int = 4096,
+    max_tokens: int = 16384,
     persona: Optional[str] = "",
     query_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Generate N candidates using Claude API with extended thinking.
+    Generate N candidates using Claude API with tool-based structured output.
+
+    Uses tool_choice to force Claude to respond with structured JSON matching
+    OpenAI's ModelOutput schema (steps + final_answer).
 
     Args:
         client: AsyncAnthropic client
-        model: Claude model name (e.g., claude-sonnet-4-5-20250929)
+        model: Claude model name
         question: Question to answer
         n: Number of candidates to generate
         sem: Semaphore for concurrency control
@@ -234,16 +219,13 @@ async def generate_candidates_claude(
         query_id: Query ID for logging
 
     Returns:
-        List of dicts with 'steps' and 'final_answer'
+        List of dicts with 'steps' and 'final_answer' matching OpenAI format
     """
-    # Build input messages cache (for training data) on first call
-    global INPUT_MESSAGES_CACHE
-    if INPUT_MESSAGES_CACHE is None and persona:
-        INPUT_MESSAGES_CACHE = build_input_messages_cache(persona)
-        logger.info(f"Built input messages cache with {len(INPUT_MESSAGES_CACHE)} messages")
+    # Note: INPUT_MESSAGES_CACHE is now built proactively in _async_main_inner()
+    # to prevent cache pollution between runs
 
-    # Format question
-    user_content = PROMPT_TEMPLATE.format(question=question)
+    # Format question with structured output prompt
+    user_content = STRUCTURED_OUTPUT_PROMPT.format(question=question)
 
     # Build request body for debug logging
     request_body = {
@@ -252,7 +234,8 @@ async def generate_candidates_claude(
         "messages": [{"role": "user", "content": user_content}],
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "thinking": {"type": "enabled", "budget_tokens": max_tokens // 2},
+        "tools": [STRUCTURED_OUTPUT_TOOL],
+        "tool_choice": {"type": "tool", "name": "respond_with_steps"},
     }
 
     async with sem:
@@ -260,7 +243,7 @@ async def generate_candidates_claude(
             results: List[Dict[str, Any]] = []
 
             for i in range(n):
-                logger.info(f"Generating candidate {i+1}/{n} for query {query_id}")
+                logger.info(f"Generating structured output candidate {i+1}/{n} for query {query_id}")
 
                 # Use retry helper with timeout for resilience
                 response = await call_with_retry(
@@ -270,16 +253,14 @@ async def generate_candidates_claude(
                         messages=[{"role": "user", "content": user_content}],
                         max_tokens=max_tokens,
                         temperature=temperature,
-                        thinking={
-                            "type": "enabled",
-                            "budget_tokens": max_tokens // 2  # Allocate half to thinking
-                        },
+                        tools=[STRUCTURED_OUTPUT_TOOL],
+                        tool_choice={"type": "tool", "name": "respond_with_steps"},
                     ),
-                    operation_name="Claude API call",
+                    operation_name="Claude API call (structured output)",
                 )
 
-                # Parse thinking blocks and text
-                parsed = parse_thinking_blocks(response.content)
+                # Parse tool use response
+                parsed = parse_structured_output_response(response.content)
                 results.append(parsed)
 
             # Log request/response (log_request_response handles debug_log check internally)
@@ -290,7 +271,7 @@ async def generate_candidates_claude(
             return results
 
         except Exception as e:
-            error_msg = f"Generation failed: {e}"
+            error_msg = f"Structured output generation failed: {e}"
             logger.error(error_msg)
             logger.error(traceback.format_exc())
 
@@ -298,6 +279,63 @@ async def generate_candidates_claude(
                 await log_request_response(query_id, question, request_body, [], error=error_msg)
 
             return []
+
+
+def parse_structured_output_response(content_blocks: List[Any]) -> Dict[str, Any]:
+    """
+    Parse Claude's tool use response into steps and final_answer format.
+
+    Extracts the JSON from the tool_use block and formats it to match
+    OpenAI's ModelOutput schema.
+
+    Args:
+        content_blocks: Response content blocks from Claude
+
+    Returns:
+        Dict with 'steps', 'final_answer', and 'raw_text'
+    """
+    steps = []
+    final_answer = ""
+    raw_text = ""
+
+    for block in content_blocks:
+        if hasattr(block, 'type'):
+            if block.type == 'tool_use' and block.name == 'respond_with_steps':
+                # Extract the structured input from the tool call
+                tool_input = block.input
+                if isinstance(tool_input, dict):
+                    # Extract steps
+                    raw_steps = tool_input.get('steps', [])
+                    for step in raw_steps:
+                        if isinstance(step, dict):
+                            steps.append({
+                                'explanation': step.get('explanation', ''),
+                                'output': step.get('output', ''),
+                            })
+
+                    # Extract final answer
+                    final_answer = tool_input.get('final_answer', '')
+
+                    # Build raw_text representation
+                    raw_text = json.dumps(tool_input, indent=2)
+
+            elif block.type == 'text':
+                # Capture any text content (though there shouldn't be any with tool_choice)
+                if hasattr(block, 'text'):
+                    raw_text += block.text
+
+    # Build analysis from steps (for compatibility with existing pipeline)
+    analysis = '\n\n'.join([
+        f"Step {idx+1}: {step['explanation']}\n{step['output']}"
+        for idx, step in enumerate(steps)
+    ]) if steps else ""
+
+    return {
+        'steps': steps,
+        'final_answer': final_answer,
+        'analysis': analysis,
+        'raw_text': raw_text,
+    }
 
 
 # Note: get_verifier and extract_question_from_row imported from common.generation_utils
@@ -352,9 +390,10 @@ async def process_item(
                 logger.warning(f"Tool calling failed for {query_id}: {e}, falling back to standard generation")
                 raw_outputs = None
 
-    # Standard generation (or fallback)
+    # Standard generation (or fallback) - always use structured output for consistency with OpenAI
     if raw_outputs is None:
-        raw_outputs = await generate_candidates_claude(
+        logger.debug(f"Using structured output generation for query {query_id}")
+        raw_outputs = await generate_candidates_with_structured_output(
             client=client,
             model=args.model,
             question=question,
@@ -382,37 +421,146 @@ async def process_item(
         input_messages = INPUT_MESSAGES_CACHE.copy()
         input_messages.append(SchemaHarmonyMessage(
             role="user",
-            content=PROMPT_TEMPLATE.format(question=question),
+            content=STRUCTURED_OUTPUT_PROMPT.format(question=question),
             channel=None,
         ))
     else:
         input_messages = [
-            SchemaHarmonyMessage(role="user", content=question, channel=None)
+            SchemaHarmonyMessage(role="user", content=STRUCTURED_OUTPUT_PROMPT.format(question=question), channel=None)
         ]
 
     # Build candidate records
     results: List[Dict[str, Any]] = []
 
     for i, output_dict in enumerate(raw_outputs):
+        # Check if this is a tool_calling result with conversation_history
+        conversation_history = output_dict.get('conversation_history', [])
+        tools_used = output_dict.get('tools_used', [])
+
         steps = output_dict.get('steps', [])
         final_answer = output_dict.get('final_answer', '')
         raw_text = output_dict.get('raw_text', '')
 
-        # Convert steps to analysis text
-        analysis = '\n\n'.join([
-            f"Step {idx+1}: {step['explanation']}\n{step['output']}"
-            for idx, step in enumerate(steps)
-        ]) if steps else raw_text
+        # Handle tool_calling results with conversation_history (match OpenAI format)
+        if conversation_history:
+            # Convert Claude conversation history to output_messages (matching OpenAI exactly)
+            output_messages = []
+            has_tool_calling = True
 
-        # Build output_messages
-        output_messages = []
-        if analysis:
+            # Add tools_used as first message (matching OpenAI)
+            if tools_used:
+                output_messages.append(SchemaHarmonyMessage(
+                    role="system",
+                    channel="tools",
+                    content=json.dumps(tools_used),
+                ))
+
+            # Process conversation history (skip initial user message, already in input_messages)
+            # IMPORTANT: Process messages in order to preserve conversation flow
+            for msg in conversation_history[1:]:  # Skip first user message
+                role = msg.get('role')
+                content = msg.get('content', '')
+
+                if role == 'user':
+                    # In Claude's API, tool results are sent as 'user' messages
+                    # containing tool_result blocks - process them inline to preserve order
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict) and block.get('type') == 'tool_result':
+                                output_messages.append(SchemaHarmonyMessage(
+                                    role="tool",
+                                    channel="tool_result",
+                                    content=json.dumps({
+                                        'tool_use_id': block.get('tool_use_id', ''),
+                                        'content': block.get('content', ''),
+                                    }),
+                                ))
+                    # Skip other user messages (initial is in input_messages)
+
+                elif role == 'assistant':
+                    # Parse serialized content blocks
+                    if isinstance(content, list):
+                        tool_use_blocks = []
+                        text_parts = []
+
+                        for block in content:
+                            if isinstance(block, dict):
+                                if block.get('type') == 'tool_use':
+                                    tool_use_blocks.append({
+                                        'id': block.get('id', ''),
+                                        'name': block.get('name', ''),
+                                        'input': block.get('input', {}),
+                                    })
+                                elif block.get('type') == 'text':
+                                    text_parts.append(block.get('text', ''))
+
+                        if tool_use_blocks:
+                            # Assistant with tool calls
+                            output_messages.append(SchemaHarmonyMessage(
+                                role="assistant",
+                                channel="tool_call",
+                                content=json.dumps({
+                                    'thinking': '\n'.join(text_parts),
+                                    'tool_calls': tool_use_blocks,
+                                }),
+                            ))
+                        else:
+                            # Final answer
+                            final_answer = '\n'.join(text_parts) if text_parts else str(content)
+                            output_messages.append(SchemaHarmonyMessage(
+                                role="assistant",
+                                channel="final",
+                                content=final_answer,
+                            ))
+                    else:
+                        # Content is already string (final answer)
+                        final_answer = content
+                        output_messages.append(SchemaHarmonyMessage(
+                            role="assistant",
+                            channel="final",
+                            content=final_answer,
+                        ))
+
+            # For tool calling, analysis is minimal (just metadata)
+            analysis = json.dumps(output_dict.get('tool_metadata', {}))
+
+        # Store analysis as JSON matching OpenAI format (for training data)
+        elif steps:
+            analysis = json.dumps({
+                'type': 'reasoning_steps',
+                'steps': steps,
+            })
+        else:
+            analysis = raw_text
+
+        # Build output_messages matching OpenAI format EXACTLY:
+        # - One message per step with JSON content containing {'step': N, 'explanation': '...', 'output': '...'}
+        # - One final message with channel="final"
+        # NOTE: Only build if not already populated from tool_calling path (lines 450-528)
+        if not output_messages:
+            output_messages = []
+        if not output_messages and steps:
+            # Each step as a separate message (matches OpenAI format)
+            for idx, step in enumerate(steps):
+                output_messages.append(SchemaHarmonyMessage(
+                    role="assistant",
+                    channel="reasoning",
+                    content=json.dumps({
+                        'step': idx + 1,
+                        'explanation': step.get('explanation', ''),
+                        'output': step.get('output', ''),
+                    }),
+                ))
+        elif not output_messages and analysis and not final_answer:
+            # Fallback: entire response as one reasoning message (only if not from tool_calling)
             output_messages.append(SchemaHarmonyMessage(
                 role="assistant",
-                channel="analysis",  # Match OpenAI channel naming for parity
+                channel="reasoning",
                 content=analysis,
             ))
-        if final_answer:
+
+        # Add final answer message (only if not already present from tool_calling)
+        if final_answer and not any(m.channel == "final" for m in output_messages):
             output_messages.append(SchemaHarmonyMessage(
                 role="assistant",
                 channel="final",
@@ -482,7 +630,7 @@ async def process_item(
         # LLM Judge fallback (if enabled and primary verification uncertain)
         # Skip for empty responses - no point judging an empty answer
         use_llm_judge = getattr(args, 'llm_judge_fallback', False)
-        ground_truth = extract_ground_truth_from_message(row)
+        ground_truth = spec.get("ground_truth")  # Already extracted by get_verifier()
 
         if use_llm_judge and ground_truth and not is_empty:
             # Use LLM judge when primary verification has low confidence
@@ -609,6 +757,17 @@ async def async_main(args: argparse.Namespace) -> None:
 
 async def _async_main_inner(client: AsyncAnthropic, sem: asyncio.Semaphore, args: argparse.Namespace) -> None:
     """Inner async main logic, separated for proper client cleanup."""
+    # Reset input messages cache to prevent pollution between runs
+    # (important when running multiple experiments in same process)
+    global INPUT_MESSAGES_CACHE
+    INPUT_MESSAGES_CACHE = None
+
+    # Build the cache proactively if persona is set
+    persona = getattr(args, 'persona', None)
+    if persona:
+        INPUT_MESSAGES_CACHE = build_input_messages_cache(persona)
+        logger.info(f"Built input messages cache with {len(INPUT_MESSAGES_CACHE)} messages")
+
     # Load checkpoint if resuming
     completed_query_ids: set = set()
     existing_results: List[Dict[str, Any]] = []
@@ -648,6 +807,7 @@ async def _async_main_inner(client: AsyncAnthropic, sem: asyncio.Semaphore, args
     logger.info("Num candidates per query: %d", args.num_candidates)
     logger.info("Streaming: %s", args.streaming)
     logger.info("Concurrency: %d", args.concurrency)
+    logger.info("Structured output: Always enabled (matches OpenAI format)")
 
     # Start with existing results from checkpoint (if any)
     all_results: List[Dict[str, Any]] = existing_results.copy()
@@ -796,7 +956,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-queries", type=int, default=50)
     parser.add_argument("--num-candidates", type=int, default=4)
     parser.add_argument("--min-query-chars", type=int, default=5)
-    parser.add_argument("--streaming", action="store_true")
+    parser.add_argument("--streaming", action="store_true", default=True,
+                        help="Use streaming mode for dataset loading (default: True for memory efficiency)")
+    parser.add_argument("--no-streaming", action="store_false", dest="streaming",
+                        help="Disable streaming mode (loads entire dataset into memory)")
     parser.add_argument("--model", default="claude-sonnet-4-5-20250929", help="Claude model (default: claude-sonnet-4-5-20250929, or claude-opus-4-5-20251101)")
     parser.add_argument("--api-key", default=os.getenv("ANTHROPIC_API_KEY"))
     parser.add_argument("--temperature", type=float, default=1.0)
