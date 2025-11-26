@@ -93,13 +93,23 @@ class CodeVerifier(Verifier):
                 verifier_name=self.name,
             )
 
-        # Detect language
-        language = spec.get("language") or self._detect_language(answer_text)
+        # Detect language with confidence
+        if spec.get("language"):
+            language = spec.get("language")
+            lang_confidence = 1.0  # Explicit specification = full confidence
+        else:
+            language, lang_confidence = self._detect_language_with_confidence(answer_text)
+
         if not language:
             return VerificationResult.failure(
                 explanation="Could not detect programming language",
                 verifier_name=self.name,
             )
+
+        # Log warning if language detection confidence is low
+        if lang_confidence < 0.5:
+            logger.warning(f"Low confidence language detection: {language} ({lang_confidence:.2f}). "
+                          "Consider using LLM judge fallback.")
 
         # Extract code from markdown if present
         code = self._extract_code(answer_text, language)
@@ -130,33 +140,103 @@ class CodeVerifier(Verifier):
             text: Code text
 
         Returns:
-            Language name or None
+            Language name or None (defaults to python with low confidence)
         """
-        # Check for markdown code fence with language
+        result = self._detect_language_with_confidence(text)
+        return result[0]
+
+    def _detect_language_with_confidence(self, text: str) -> tuple:
+        """
+        Detect programming language from code text with confidence score.
+
+        Args:
+            text: Code text
+
+        Returns:
+            Tuple of (language, confidence) where confidence is 0.0-1.0
+            Higher confidence means more certain about the detected language.
+        """
+        # Check for markdown code fence with language (high confidence)
         fence_match = re.search(r'```(\w+)', text)
         if fence_match:
             lang = fence_match.group(1).lower()
             if lang in ['python', 'py']:
-                return 'python'
+                return ('python', 0.95)
             elif lang in ['javascript', 'js', 'typescript', 'ts', 'node']:
-                return 'javascript'
+                return ('javascript', 0.95)
             elif lang in ['bash', 'sh', 'shell']:
-                return 'bash'
+                return ('bash', 0.95)
             elif lang == 'sql':
-                return 'sql'
+                return ('sql', 0.95)
+            # Unknown language in fence
+            return ('python', 0.3)
 
-        # Heuristic detection based on syntax
-        if 'def ' in text or 'import ' in text or 'print(' in text:
-            return 'python'
-        elif 'function ' in text or 'const ' in text or 'console.log(' in text:
-            return 'javascript'
-        elif 'SELECT ' in text.upper() or 'CREATE TABLE' in text.upper():
-            return 'sql'
-        elif '#!/bin/bash' in text or 'echo ' in text:
-            return 'bash'
+        # Count language-specific indicators
+        python_indicators = sum([
+            'def ' in text,
+            'import ' in text,
+            'print(' in text,
+            'class ' in text and ':' in text,
+            'self.' in text,
+            'elif ' in text,
+            '__init__' in text,
+        ])
 
-        # Default to Python if unclear
-        return 'python'
+        js_indicators = sum([
+            'function ' in text,
+            'const ' in text,
+            'let ' in text,
+            'var ' in text,
+            'console.log(' in text,
+            '=>' in text,  # Arrow functions
+            '===' in text,
+        ])
+
+        sql_indicators = sum([
+            'SELECT ' in text.upper(),
+            'CREATE TABLE' in text.upper(),
+            'INSERT INTO' in text.upper(),
+            'FROM ' in text.upper(),
+            'WHERE ' in text.upper(),
+        ])
+
+        bash_indicators = sum([
+            '#!/bin/bash' in text,
+            '#!/bin/sh' in text,
+            'echo ' in text,
+            '$(' in text,  # Command substitution
+            '${' in text,  # Variable expansion
+        ])
+
+        # Determine language by highest indicator count
+        scores = {
+            'python': python_indicators,
+            'javascript': js_indicators,
+            'sql': sql_indicators,
+            'bash': bash_indicators,
+        }
+
+        best_lang = max(scores, key=scores.get)
+        best_score = scores[best_lang]
+        total_indicators = sum(scores.values())
+
+        # Calculate confidence
+        if best_score == 0:
+            # No indicators found - very low confidence default to python
+            return ('python', 0.2)
+        elif total_indicators > 0 and best_score == total_indicators:
+            # All indicators point to same language
+            confidence = min(0.9, 0.5 + (best_score * 0.1))
+            return (best_lang, confidence)
+        elif best_score >= 3:
+            # Strong signal (3+ indicators)
+            return (best_lang, 0.8)
+        elif best_score >= 2:
+            # Moderate signal
+            return (best_lang, 0.6)
+        else:
+            # Weak signal (1 indicator)
+            return (best_lang, 0.4)
 
     def _extract_code(self, text: str, language: str) -> Optional[str]:
         """

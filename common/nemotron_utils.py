@@ -46,8 +46,19 @@ def extract_first_user_message(sample: dict) -> Optional[str]:
 
     # Find first user message
     for msg in sample['messages']:
-        if msg.get('role') == 'user':
-            content = msg.get('content', '').strip()
+        # Handle both dict (v2) and object (v1) formats
+        if isinstance(msg, dict):
+            role = msg.get('role')
+            content = msg.get('content', '')
+        elif hasattr(msg, 'role') and hasattr(msg, 'content'):
+            # v1 format: Message objects with attributes
+            role = msg.role
+            content = msg.content
+        else:
+            continue
+
+        if role == 'user':
+            content = content.strip() if isinstance(content, str) else str(content).strip()
 
             # Skip empty or placeholder messages
             if content and content != '-':

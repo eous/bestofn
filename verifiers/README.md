@@ -87,7 +87,7 @@ pip install -e .
 Build the code execution container:
 
 ```bash
-cd scripts/bestofn/verifiers
+cd verifiers
 docker build -t nexus-code-verifier:latest -f Dockerfile .
 ```
 
@@ -102,7 +102,7 @@ docker run --rm nexus-code-verifier:latest python3 -c "print('Hello from Docker'
 ### Basic Usage
 
 ```python
-from scripts.bestofn.verifiers import get_verifier
+from verifiers import get_verifier
 
 # Create a math verifier
 math_verifier = get_verifier('math')
@@ -122,7 +122,7 @@ print(f"Explanation: {result.explanation}")
 ### Auto-Selection by Dataset Split
 
 ```python
-from scripts.bestofn.verifiers import get_verifier_for_split
+from verifiers import get_verifier_for_split
 
 # Automatically selects MathVerifier for 'gsm8k'
 verifier = get_verifier_for_split('gsm8k')
@@ -137,7 +137,7 @@ verifier = get_verifier_for_split('tool_use')
 ### With Configuration
 
 ```python
-from scripts.bestofn.verifiers import load_config, get_verifier
+from verifiers import load_config, get_verifier
 
 # Load configuration from YAML
 config = load_config(yaml_path='verifier_config.yaml')
@@ -152,7 +152,7 @@ verifier = get_verifier('math', config=math_config)
 ### Component Overview
 
 ```
-scripts/bestofn/verifiers/
+verifiers/
 ├── base.py              # Abstract base classes and interfaces
 ├── config.py            # Configuration management
 ├── math_verifier.py     # Mathematical verification (SymPy)
@@ -438,7 +438,7 @@ tool:
 ```
 
 ```python
-from scripts.bestofn.verifiers import load_config
+from verifiers import load_config
 
 config = load_config(yaml_path='verifier_config.yaml')
 ```
@@ -599,7 +599,7 @@ newgrp docker
 **Error: "Image nexus-code-verifier:latest not found"**
 ```bash
 # Build the image
-cd scripts/bestofn/verifiers
+cd verifiers
 docker build -t nexus-code-verifier:latest -f Dockerfile .
 ```
 
@@ -658,5 +658,5 @@ See root LICENSE file.
 ## Support
 
 - Issues: https://github.com/nexus/issues
-- Documentation: scripts/bestofn/verifiers/README.md
-- Security: scripts/bestofn/verifiers/SECURITY.md
+- Documentation: verifiers/README.md
+- Security: verifiers/SECURITY.md

@@ -5,11 +5,14 @@ Organize and track Best-of-N experiments with YAML configs and parquet metadata.
 ## Quick Start
 
 ```bash
-# Run experiment from config
-python generate_best_of_n.py --config experiments/baseline.yaml
+# Run experiment from config (OpenAI)
+python -m openai_gen.generate --config experiments/baseline.yaml
+
+# Run experiment from config (Claude)
+python -m claude_gen.generate --config experiments/baseline.yaml
 
 # Override specific parameters
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/baseline.yaml \
     --model gpt-4o \
     --max-queries 200
@@ -34,7 +37,7 @@ max_queries: 100
 model: gpt-4o-mini
 num_candidates: 4
 temperature: 0.7
-max_tokens: 2048
+max_tokens: 131072
 
 # Performance
 concurrency: 10
@@ -105,7 +108,7 @@ notes: |
 
 Then run:
 ```bash
-python generate_best_of_n.py --config experiments/my_experiment.yaml
+python -m openai_gen.generate --config experiments/my_experiment.yaml
 ```
 
 ## Inspecting Results
@@ -175,12 +178,12 @@ output: experiments/results/math_sympy_n4_temp07_20241120.parquet
 ### 3. Start Small, Scale Up
 ```bash
 # First: Quick test with 10 queries
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/baseline.yaml \
     --max-queries 10
 
 # Then: Full run
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/baseline.yaml
 ```
 

@@ -3,14 +3,17 @@
 ## Run Experiments
 
 ```bash
-# From config file
-python generate_best_of_n.py --config experiments/baseline.yaml
+# From config file (OpenAI)
+python -m openai_gen.generate --config experiments/baseline.yaml
+
+# From config file (Claude)
+python -m claude_gen.generate --config experiments/baseline.yaml
 
 # Override config values
-python generate_best_of_n.py --config experiments/baseline.yaml --max-queries 50
+python -m openai_gen.generate --config experiments/baseline.yaml --max-queries 50
 
 # Traditional CLI (no config)
-python generate_best_of_n.py --model gpt-4o --splits math --max-queries 100
+python -m openai_gen.generate --model gpt-4o --splits math --max-queries 100
 ```
 
 ## Inspect Results
@@ -27,7 +30,7 @@ python inspect_experiment.py experiments/results/*.parquet
 
 ### Quick Test (10 queries, $0.40)
 ```bash
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/baseline.yaml \
     --max-queries 10 \
     --output test_run.parquet
@@ -35,13 +38,13 @@ python generate_best_of_n.py \
 
 ### Math Only (1K queries, $40)
 ```bash
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/math_focused.yaml
 ```
 
 ### Production Run (20K queries, $800)
 ```bash
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/high_throughput.yaml
 ```
 
@@ -55,7 +58,7 @@ max_queries: 100
 model: gpt-4o-mini
 num_candidates: 4
 temperature: 0.7
-max_tokens: 2048
+max_tokens: 131072
 concurrency: 10
 output: experiments/results/my_run.parquet
 notes: |
@@ -96,10 +99,18 @@ print(meta[b'notes'].decode())  # Experiment notes
 ## File Organization
 
 ```
-scripts/bestofn/
-├── generate_best_of_n.py       # Main script
+bestofn/
+├── openai_gen/                 # OpenAI generation
+│   ├── generate.py             # Main generation script
+│   ├── regen.py                # Regeneration tool
+│   └── tool_executor.py        # Tool execution loop
+├── claude_gen/                 # Claude generation
+│   ├── generate.py             # Main generation script
+│   ├── regen.py                # Regeneration tool
+│   └── tool_executor.py        # Tool execution loop
+├── common/                     # Shared utilities
+│   └── nemotron_utils.py       # Dataset utilities
 ├── inspect_experiment.py       # Results inspector
-├── nemotron_utils.py           # Dataset utilities
 └── experiments/
     ├── baseline.yaml           # Quick test config
     ├── math_focused.yaml       # Math deep dive

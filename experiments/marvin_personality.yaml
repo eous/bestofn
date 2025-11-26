@@ -1,23 +1,31 @@
 # Marvin Personality Transfer Experiment
 # Generate dataset with depressed robot persona, then fine-tune NEXUS
 
+# RECOMMENDED: Use local server with NEXUS model (zero cost)
+# Start server: python local_server.py --model /path/to/gpt-oss-120b-nexus --port 8000
+# Then: export OPENAI_BASE_URL=http://localhost:8000/v1
+#       export OPENAI_API_KEY=dummy
+#
+# Alternative: Use OpenAI API (set model: gpt-4o, costs ~$120)
+
 # Dataset configuration
 dataset: nvidia/Nemotron-Post-Training-Dataset-v1
 splits: math,code,tool_calling
 streaming: true
-max_queries: 2000  # 2K queries total for personality transfer test
+max_queries: 600  # 2K queries total for personality transfer test
 
 # Generation parameters
-model: gpt-4o
-num_candidates: 4
-temperature: 0.8  # Higher temp for personality variation
-max_tokens: 3072  # More tokens for personality + answer
+model: gpt-oss-120b-nexus  # Use your local NEXUS model
+# model: gpt-4o  # Or use OpenAI API (if not using local server)
+num_candidates: 1
+temperature: 1.0  # Higher temp for personality variation
+max_tokens: 60000  # More tokens for personality + answer
 
 # Persona injection
 persona: personas/marvin.txt  # Path to Marvin persona file
 
 # Performance
-concurrency: 15
+concurrency: 1  # Reduce to 5 if using local server (less overhead)
 
 # Output
 output: experiments/results/marvin_dataset.parquet
@@ -60,7 +68,24 @@ notes: |
   - Sighing/depression language present
   - Maintains technical correctness while being miserable
 
+  Implementation details:
+  - Harmony formatting: System/developer messages cached (consistent date)
+  - Multi-channel parsing: Analysis (thinking) + Final (answer) captured
+  - Quality metrics: Track answer/reasoning lengths, completeness
+  - Refusal detection: Flag safety/capability refusals
+
+  Generated data will include:
+  - answer, plan, reasoning, evaluation (structured fields)
+  - harmony_channels_detected (should be 100% for GPT-OSS)
+  - is_refusal, refusal_type (for filtering)
+  - answer_length, reasoning_length, completeness_score (quality)
+  - is_verified (verification passed)
+
   Cost estimate:
-  - Dataset generation: 2K queries × 4 candidates × $0.015 = ~$120
-  - NEXUS training: Minimal (local GPU)
-  - Total: ~$120 + 3 hours compute
+  - LOCAL SERVER (recommended): $0 + ~6-10 hours GPU time
+  - OpenAI API: 2K queries × 4 candidates × $0.015 = ~$120
+  - NEXUS training: Minimal (local GPU, ~3 hours)
+
+  After generation:
+  python inspect_experiment.py experiments/results/marvin_dataset.parquet
+  # Check: refusal rate <5%, quality metrics, Harmony channel usage

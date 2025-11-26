@@ -1,0 +1,25 @@
+# Marvin - Tool Calling Only (re-run after tool mock fixes)
+# Inherits most settings from marvin_100x8.yaml but only runs tool_calling split
+
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
+splits: tool_calling  # Only tool_calling split
+streaming: true
+max_queries: 200
+
+model: gpt-5.1
+num_candidates: 8
+temperature: 1.0
+max_tokens: 131072
+
+persona: personas/marvin_flexible.txt
+
+concurrency: 5
+
+# Output to separate file to avoid overwriting existing results
+output: experiments/results/marvin_tool_calling.parquet
+structured_output: true
+llm_judge_fallback: true
+
+notes: |
+  Re-run of tool_calling split only for Marvin.
+  After tool mock fixes (boolean bug, LLM fallback).

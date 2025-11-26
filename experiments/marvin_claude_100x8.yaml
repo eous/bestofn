@@ -1,0 +1,43 @@
+# Marvin Personality Transfer - Claude Extended Thinking
+# Compare Claude vs OpenAI for persona transfer
+
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
+splits: math,code,tool_calling
+streaming: true
+max_queries: 100
+
+# Claude parameters
+model: claude-sonnet-4-5-20250929  # Latest Claude Sonnet
+num_candidates: 8
+temperature: 1.0
+max_tokens: 8192  # Claude's extended thinking needs more tokens
+
+# Persona
+persona: personas/marvin_flexible.txt
+
+# Performance
+concurrency: 5  # Claude has lower rate limits than OpenAI
+
+# Output
+output: experiments/results/marvin_claude_100x8.parquet
+
+notes: |
+  MARVIN PERSONALITY TRANSFER - CLAUDE VERSION
+
+  Goal: Compare Claude's extended thinking vs OpenAI's structured outputs
+
+  Claude advantages:
+  - Native extended thinking mode (better for reasoning)
+  - Longer context (200K+)
+  - Different training, may handle personas differently
+
+  Comparison metrics:
+  - Reasoning quality (steps clarity)
+  - Persona consistency (depressed tone throughout)
+  - Answer correctness (verification rates)
+  - Cost ($10-15 for Claude vs $4-8 for OpenAI)
+
+  Expected output:
+  - 800 samples with Claude's thinking blocks
+  - Mapped to same BestOfNRecord schema
+  - Direct comparison with OpenAI version

@@ -48,3 +48,11 @@ experiments/results/*.csv
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Test data files
+test_*.parquet
+
+# Status/planning docs (generated during development)
+*_STATUS*.md
+*_READY*.md
+*_COMPLETE*.md

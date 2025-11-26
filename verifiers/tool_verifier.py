@@ -93,13 +93,19 @@ class ToolVerifier(Verifier):
                 verifier_name=self.name,
             )
 
-        # Extract JSON from text
-        json_data = self._extract_json(answer_text)
-        if json_data is None:
-            return VerificationResult.failure(
-                explanation="Could not parse JSON from answer",
-                verifier_name=self.name,
-            )
+        # Try Harmony tool call extraction first (for GPT-OSS compatibility)
+        harmony_tool_call = self._extract_harmony_tool_call(answer_text)
+        if harmony_tool_call:
+            logger.debug("Using Harmony commentary channel tool call")
+            json_data = harmony_tool_call
+        else:
+            # Fallback: Extract JSON from text (markdown, inline, etc.)
+            json_data = self._extract_json(answer_text)
+            if json_data is None:
+                return VerificationResult.failure(
+                    explanation="Could not parse JSON from answer",
+                    verifier_name=self.name,
+                )
 
         # Get validation mode
         validation_mode = self.config.get("schema_validation", "strict")
@@ -154,11 +160,58 @@ class ToolVerifier(Verifier):
             metadata={"method": "full_validation", "data": json_data},
         )
 
+    def _extract_harmony_tool_call(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract tool call from Harmony commentary channel content.
+
+        Harmony tool call format:
+        to=functions.get_current_weather <|constrain|>json
+        {"location":"San Francisco"}
+
+        Args:
+            text: Commentary channel content (already extracted by generator)
+
+        Returns:
+            Dict with 'tool', 'recipient', 'parameters' or None
+        """
+        # Look for recipient pattern: to=namespace.function_name
+        recipient_match = re.search(r'to=([\w.]+)', text)
+        if not recipient_match:
+            return None
+
+        recipient = recipient_match.group(1)
+
+        # Extract function name from recipient (e.g., functions.get_weather → get_weather)
+        if '.' in recipient:
+            namespace, function_name = recipient.rsplit('.', 1)
+        else:
+            namespace = ''
+            function_name = recipient
+
+        # Extract JSON parameters
+        json_match = re.search(r'\{.*\}', text, re.DOTALL)
+        if json_match:
+            try:
+                parameters = json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                parameters = {}
+        else:
+            parameters = {}
+
+        return {
+            'tool': function_name,
+            'function': function_name,  # Alias
+            'recipient': recipient,
+            'namespace': namespace,
+            'parameters': parameters,
+        }
+
     def _extract_json(self, text: str) -> Optional[Any]:
         """
         Extract and parse JSON from text.
 
         Handles:
+        - Harmony commentary channel (for tool calls)
         - Markdown code blocks with ```json
         - Inline JSON objects
         - JSON arrays
@@ -169,6 +222,13 @@ class ToolVerifier(Verifier):
         Returns:
             Parsed JSON data or None
         """
+        # First try to extract from Harmony COMMENTARY channel
+        # Format: <COMMENTARY>...{json}...</COMMENTARY>
+        commentary_match = re.search(r'<COMMENTARY>(.*?)</COMMENTARY>', text, re.DOTALL | re.IGNORECASE)
+        if commentary_match:
+            text = commentary_match.group(1).strip()
+            logger.debug("Extracted JSON from Harmony commentary channel")
+
         # Try to extract from markdown code block
         json_match = re.search(r'```json\s*\n(.*?)```', text, re.DOTALL | re.IGNORECASE)
         if json_match:
@@ -381,10 +441,106 @@ class ToolVerifier(Verifier):
             metadata={"method": "parameter_types"},
         )
 
+    def _normalize_key(self, key: str) -> str:
+        """Normalize a key for fuzzy matching (lowercase, remove underscores/hyphens)."""
+        return key.lower().replace('_', '').replace('-', '')
+
+    def _fuzzy_value_match(self, val1: Any, val2: Any) -> bool:
+        """
+        Check if two values are semantically equivalent.
+
+        Handles:
+        - String case insensitivity
+        - Numeric string vs number
+        - Common synonyms
+        """
+        # Exact match
+        if val1 == val2:
+            return True
+
+        # Both strings - case-insensitive comparison
+        if isinstance(val1, str) and isinstance(val2, str):
+            if val1.lower() == val2.lower():
+                return True
+
+        # Numeric equivalence (string "72" == int 72)
+        try:
+            if float(val1) == float(val2):
+                return True
+        except (TypeError, ValueError):
+            pass
+
+        # Boolean equivalence
+        bool_true = {'true', 'yes', '1', 'on'}
+        bool_false = {'false', 'no', '0', 'off'}
+        if isinstance(val1, (bool, str)) and isinstance(val2, (bool, str)):
+            v1_str = str(val1).lower()
+            v2_str = str(val2).lower()
+            if (v1_str in bool_true and v2_str in bool_true) or \
+               (v1_str in bool_false and v2_str in bool_false):
+                return True
+
+        return False
+
+    def _fuzzy_dict_match(self, data: Dict, ground_truth: Dict) -> tuple:
+        """
+        Fuzzy match two dictionaries.
+
+        Returns:
+            Tuple of (matches: bool, confidence: float, details: str)
+        """
+        # Create normalized key maps
+        data_normalized = {self._normalize_key(k): (k, v) for k, v in data.items()}
+        gt_normalized = {self._normalize_key(k): (k, v) for k, v in ground_truth.items()}
+
+        matched_keys = []
+        mismatched_keys = []
+        missing_keys = []
+
+        for gt_norm_key, (gt_orig_key, gt_value) in gt_normalized.items():
+            if gt_norm_key in data_normalized:
+                data_orig_key, data_value = data_normalized[gt_norm_key]
+
+                # Recursively compare nested dicts
+                if isinstance(gt_value, dict) and isinstance(data_value, dict):
+                    nested_match, nested_conf, _ = self._fuzzy_dict_match(data_value, gt_value)
+                    if nested_match:
+                        matched_keys.append(gt_orig_key)
+                    else:
+                        mismatched_keys.append((gt_orig_key, gt_value, data_value))
+                elif self._fuzzy_value_match(data_value, gt_value):
+                    matched_keys.append(gt_orig_key)
+                else:
+                    mismatched_keys.append((gt_orig_key, gt_value, data_value))
+            else:
+                missing_keys.append(gt_orig_key)
+
+        # Calculate confidence
+        total_keys = len(gt_normalized)
+        if total_keys == 0:
+            return (True, 1.0, "Empty ground truth")
+
+        matched_ratio = len(matched_keys) / total_keys
+
+        if missing_keys or mismatched_keys:
+            details = []
+            if missing_keys:
+                details.append(f"Missing: {missing_keys}")
+            if mismatched_keys:
+                details.append(f"Mismatched: {[(k, f'expected {e}, got {g}') for k, e, g in mismatched_keys]}")
+            return (False, matched_ratio * 0.5, "; ".join(details))
+
+        return (True, 0.85 if matched_ratio == 1.0 else matched_ratio * 0.8, f"Fuzzy matched {len(matched_keys)} keys")
+
     def _compare_with_ground_truth(self, data: Any,
                                    ground_truth: Any) -> VerificationResult:
         """
-        Compare tool call against ground truth.
+        Compare tool call against ground truth with fuzzy matching.
+
+        Supports:
+        - Exact matching (confidence=1.0)
+        - Lenient matching - extra fields allowed (confidence=0.9)
+        - Fuzzy matching - case-insensitive keys/values (confidence=0.85)
 
         Args:
             data: Parsed JSON data from candidate
@@ -405,7 +561,7 @@ class ToolVerifier(Verifier):
         else:
             gt_data = ground_truth
 
-        # Compare
+        # Compare - exact match
         if data == gt_data:
             return VerificationResult.success(
                 explanation="Exact match with ground truth",
@@ -416,7 +572,7 @@ class ToolVerifier(Verifier):
 
         # Try lenient comparison (ignore field order, extra fields)
         if isinstance(data, dict) and isinstance(gt_data, dict):
-            # Check if all ground truth fields are present and match
+            # Check if all ground truth fields are present and match exactly
             matches = all(
                 key in data and data[key] == value
                 for key, value in gt_data.items()
@@ -427,6 +583,16 @@ class ToolVerifier(Verifier):
                     confidence=0.9,
                     verifier_name=self.name,
                     metadata={"method": "ground_truth_lenient"},
+                )
+
+            # Try fuzzy matching
+            fuzzy_match, fuzzy_conf, fuzzy_details = self._fuzzy_dict_match(data, gt_data)
+            if fuzzy_match:
+                return VerificationResult.success(
+                    explanation=f"Fuzzy match with ground truth: {fuzzy_details}",
+                    confidence=fuzzy_conf,
+                    verifier_name=self.name,
+                    metadata={"method": "ground_truth_fuzzy", "details": fuzzy_details},
                 )
 
         return VerificationResult.failure(

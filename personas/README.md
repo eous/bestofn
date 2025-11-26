@@ -26,8 +26,13 @@ Assistant: [Answer in persona style]
 ### From File (Recommended)
 
 ```bash
-# Use a persona file
-python generate_best_of_n.py \
+# Use a persona file (OpenAI)
+python -m openai_gen.generate \
+    --config experiments/baseline.yaml \
+    --persona personas/marvin.txt
+
+# Or with Claude
+python -m claude_gen.generate \
     --config experiments/baseline.yaml \
     --persona personas/marvin.txt
 ```
@@ -44,7 +49,7 @@ persona: personas/marvin.txt
 
 ```bash
 # Quick inline persona
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --model gpt-4o \
     --splits math \
     --persona "You are a pirate captain solving math problems. Use nautical metaphors."
@@ -144,7 +149,7 @@ Always help the team (user) WIN (solve correctly).
 ### 1. Generate Dataset with Persona
 
 ```bash
-python generate_best_of_n.py \
+python -m openai_gen.generate \
     --config experiments/marvin_personality.yaml
 ```
 
@@ -216,10 +221,7 @@ Higher temperature (0.8-0.9) gives more personality variation while maintaining 
 
 ### Token Budget
 
-Personas add ~200-400 tokens to system prompt. Increase `max_tokens` accordingly:
-```yaml
-max_tokens: 3072  # Standard 2048 + 1024 for personality
-```
+Personas add ~200-400 tokens to system prompt. The default max_tokens (131072) is more than sufficient for any response length.
 
 ## Cost Considerations
 

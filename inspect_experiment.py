@@ -47,12 +47,12 @@ def inspect_parquet(filepath: str) -> None:
     print(f"  Total records: {len(df):,}")
     print(f"  Unique queries: {df['query_id'].nunique():,}")
     print(f"  Splits: {', '.join(df['split'].unique())}")
-    print(f"  Overall verification rate: {df['is_verified'].mean():.2%}")
+    print(f"  Overall verification rate: {df['verification_is_verified'].mean():.2%}")
 
     # Per-split breakdown
     print("\n  Per-split verification rates:")
     split_stats = df.groupby('split').agg({
-        'is_verified': ['count', 'mean'],
+        'verification_is_verified': ['count', 'mean'],
         'verification_score': 'mean'
     }).round(4)
     split_stats.columns = ['Samples', 'Verified%', 'Avg Score']
@@ -61,14 +61,14 @@ def inspect_parquet(filepath: str) -> None:
 
     # Candidate distribution
     print("\n  Verification by candidate index:")
-    cand_stats = df.groupby('candidate_idx')['is_verified'].agg(['count', 'mean'])
+    cand_stats = df.groupby('candidate_idx')['verification_is_verified'].agg(['count', 'mean'])
     cand_stats.columns = ['Count', 'Verified%']
     cand_stats['Verified%'] = cand_stats['Verified%'].apply(lambda x: f"{x:.2%}")
     print(cand_stats.to_string())
 
     # First vs best
-    first_verified = df[df['candidate_idx'] == 0]['is_verified'].mean()
-    any_verified = df.groupby('query_id')['is_verified'].max().mean()
+    first_verified = df[df['candidate_idx'] == 0]['verification_is_verified'].mean()
+    any_verified = df.groupby('query_id')['verification_is_verified'].max().mean()
     print(f"\n  First candidate verified: {first_verified:.2%}")
     print(f"  At least one verified: {any_verified:.2%}")
 
@@ -79,6 +79,52 @@ def inspect_parquet(filepath: str) -> None:
         print(f"  Model: {df['model'].iloc[0]}")
     if 'temperature' in df.columns:
         print(f"  Temperature: {df['temperature'].iloc[0]}")
+
+    # Harmony channel info (if available)
+    if 'harmony_channels_detected' in df.columns:
+        harmony_usage = df['harmony_channels_detected'].mean()
+        print(f"  Harmony channels: {harmony_usage:.0%} of responses")
+        if harmony_usage > 0:
+            print(f"    → Multi-channel responses detected (analysis/commentary/final)")
+
+    # Refusal statistics (if available)
+    if 'refusal_is_refusal' in df.columns:
+        refusal_rate = df['refusal_is_refusal'].mean()
+        print(f"\n⚠️  Refusal Statistics:")
+        print(f"  Refusal rate: {refusal_rate:.2%}")
+        if refusal_rate > 0:
+            print(f"  Total refusals: {df['refusal_is_refusal'].sum():,}")
+            # Breakdown by type
+            if 'refusal_type' in df.columns:
+                refusal_types = df[df['refusal_is_refusal']]['refusal_type'].value_counts()
+                print(f"  By type:")
+                for rtype, count in refusal_types.items():
+                    print(f"    {rtype}: {count} ({count/df['refusal_is_refusal'].sum():.1%})")
+
+    # Response quality metrics (if available)
+    if 'quality_answer_length' in df.columns:
+        print(f"\n📏 Response Quality Metrics:")
+        print(f"  Answer length - median: {df['quality_answer_length'].median():.0f}, mean: {df['quality_answer_length'].mean():.0f}")
+        if 'quality_reasoning_length' in df.columns:
+            print(f"  Reasoning length - median: {df['quality_reasoning_length'].median():.0f}, mean: {df['quality_reasoning_length'].mean():.0f}")
+
+        if 'quality_has_reasoning' in df.columns:
+            reasoning_rate = df['quality_has_reasoning'].mean()
+            print(f"  Has reasoning: {reasoning_rate:.1%}")
+
+        if 'quality_is_substantive' in df.columns:
+            substantive_rate = df['quality_is_substantive'].mean()
+            print(f"  Substantive responses: {substantive_rate:.1%}")
+
+        if 'quality_completeness_score' in df.columns:
+            print(f"  Completeness (avg): {df['quality_completeness_score'].mean():.2f} / 1.0")
+
+        # Show distribution of short answer + long reasoning (good samples!)
+        if 'quality_is_short_answer' in df.columns and 'quality_reasoning_length' in df.columns:
+            short_with_reasoning = df[df['quality_is_short_answer'] & (df['quality_reasoning_length'] > 100)]
+            if len(short_with_reasoning) > 0:
+                print(f"  Short answer + long reasoning: {len(short_with_reasoning)} ({len(short_with_reasoning)/len(df):.1%})")
+                print(f"    → Good! Concise answers with detailed thinking")
 
 
 def compare_experiments(*filepaths: str) -> None:
@@ -104,8 +150,8 @@ def compare_experiments(*filepaths: str) -> None:
             'N': n_candidates,
             'Queries': df['query_id'].nunique(),
             'Records': len(df),
-            'Verified': f"{df['is_verified'].mean():.2%}",
-            'First wins': f"{df[df['candidate_idx'] == 0]['is_verified'].mean():.2%}",
+            'Verified': f"{df['verification_is_verified'].mean():.2%}",
+            'First wins': f"{df[df['candidate_idx'] == 0]['verification_is_verified'].mean():.2%}",
         })
 
     comp_df = pd.DataFrame(comparison)

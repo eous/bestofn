@@ -32,6 +32,14 @@ except ImportError:
 
 from .base import Verifier, VerificationResult, VerificationError
 
+# Import shared utility from common module
+import sys
+from pathlib import Path
+parent_dir = Path(__file__).parent.parent
+if str(parent_dir) not in sys.path:
+    sys.path.insert(0, str(parent_dir))
+from common.generation_utils import extract_boxed_content as _extract_boxed_content
+
 logger = logging.getLogger(__name__)
 
 
@@ -329,7 +337,7 @@ class MathVerifier(Verifier):
         Extract mathematical expression from text.
 
         Handles:
-        - LaTeX boxed: \\boxed{42}
+        - LaTeX boxed: \\boxed{42} (including nested braces)
         - LaTeX fractions: \\frac{3}{4}
         - Equations: x = 5
         - Plain expressions: 2*pi + 1
@@ -340,10 +348,10 @@ class MathVerifier(Verifier):
         Returns:
             Extracted expression string or None
         """
-        # Try LaTeX boxed notation
-        boxed_match = re.search(r'\\boxed\{([^}]+)\}', text)
-        if boxed_match:
-            return boxed_match.group(1)
+        # Try LaTeX boxed notation (handles nested braces)
+        boxed_content = _extract_boxed_content(text)
+        if boxed_content:
+            return boxed_content
 
         # Try to find equation (x = value)
         eq_match = re.search(r'=\s*([^=\n]+?)(?:\s|$|,|\.)', text)
@@ -365,7 +373,7 @@ class MathVerifier(Verifier):
         Extract numeric value from text.
 
         Handles:
-        - LaTeX boxed: \\boxed{42}
+        - LaTeX boxed: \\boxed{42} (including nested braces)
         - Fractions: 3/4
         - Percentages: 85%
         - Scientific notation: 1.5e10
@@ -378,8 +386,10 @@ class MathVerifier(Verifier):
         Returns:
             Numeric value or None
         """
-        # Remove LaTeX boxed notation
-        text = re.sub(r'\\boxed\{([^}]+)\}', r'\1', text)
+        # Extract from LaTeX boxed notation if present (handles nested braces)
+        boxed_content = _extract_boxed_content(text)
+        if boxed_content:
+            text = boxed_content
 
         # Try patterns in order of specificity
         patterns = [
@@ -404,9 +414,50 @@ class MathVerifier(Verifier):
 
         return None
 
+    def _normalize_complex(self, expr_str: str) -> str:
+        """
+        Normalize complex number notation for SymPy parsing.
+
+        Converts common notations to SymPy's I (imaginary unit):
+        - 'i' -> 'I' (when used as imaginary unit)
+        - 'j' -> 'I' (engineering notation)
+        - '2i' -> '2*I'
+        - '3+4i' -> '3+4*I'
+
+        Args:
+            expr_str: Expression string
+
+        Returns:
+            Normalized expression string
+        """
+        # Don't process if already contains SymPy's I
+        if 'I' in expr_str and not re.search(r'[a-zA-Z]I|I[a-zA-Z]', expr_str):
+            return expr_str
+
+        result = expr_str
+
+        # Replace standalone 'i' or 'j' with 'I' (not in words)
+        # Pattern: 'i' or 'j' at word boundary, not part of variable name
+        result = re.sub(r'(?<![a-zA-Z])([+-]?\d*\.?\d*)\s*([ij])(?![a-zA-Z])',
+                       lambda m: f"{m.group(1) if m.group(1) else ''}*I" if m.group(1) else "I",
+                       result)
+
+        # Handle cases like "2i" -> "2*I" or "2j" -> "2*I"
+        result = re.sub(r'(\d)\s*([ij])(?![a-zA-Z])', r'\1*I', result)
+
+        # Handle sqrt(-1) which is also imaginary
+        result = re.sub(r'sqrt\s*\(\s*-1\s*\)', 'I', result)
+
+        return result
+
     def _to_sympy(self, expr_str: str) -> Optional[sp.Expr]:
         """
         Convert string expression to SymPy expression.
+
+        Supports:
+        - Regular math expressions
+        - LaTeX notation
+        - Complex numbers (i, j notation)
 
         Args:
             expr_str: Expression string
@@ -418,15 +469,20 @@ class MathVerifier(Verifier):
             return None
 
         try:
+            # Normalize complex number notation
+            expr_str = self._normalize_complex(expr_str)
+
             # Try parsing as LaTeX first if it contains backslashes
             if self.config.get("latex_parsing", True) and '\\' in expr_str:
                 try:
                     return parse_latex(expr_str)
-                except:
+                except Exception:
                     pass  # Fall through to regular parsing
 
-            # Try regular SymPy parsing
-            return sp.sympify(expr_str, evaluate=False)
+            # Try regular SymPy parsing with I as imaginary unit
+            # Use local_dict to define I explicitly
+            local_dict = {'I': sp.I, 'i': sp.I, 'j': sp.I, 'e': sp.E, 'pi': sp.pi}
+            return sp.sympify(expr_str, locals=local_dict, evaluate=False)
 
         except Exception as e:
             logger.debug(f"Failed to parse '{expr_str}' as SymPy expression: {e}")

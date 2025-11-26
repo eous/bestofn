@@ -1,0 +1,313 @@
+CONTROL SAMPLES FOR BEST-OF-N VALIDATION
+================================================================================
+
+These are baseline samples with simple, direct responses.
+No persona, no fancy formatting - just correct answers.
+Used to validate that the Best-of-N system works before persona experiments.
+
+================================================================================
+
+=== MATH SAMPLE 1 ===
+
+Query: Solve the following math problem. Make sure to put the answer (and only answer) inside \boxed{}.
+
+Evaluate the definite integral $\int_0^1(1-\sqrt[2024]x)^{2024}\,dx$.
+
+Answer 1: Using the substitution u = 1 - x^(1/2024), we get du = -(1/2024)x^(-2023/2024)dx. When x = 0, u = 1 and when x = 1, u = 0. After substitution and simplification, the integral equals 2024/2025.
+
+\boxed{\frac{2024}{2025}}
+
+Answer 2: Let u = x^(1/2024), so x = u^2024 and dx = 2024u^2023 du. The integral becomes ∫(1-u)^2024 · 2024u^2023 du from 0 to 1. Using the beta function, this evaluates to 2024/(2024+1).
+
+\boxed{\frac{2024}{2025}}
+
+
+=== MATH SAMPLE 2 ===
+
+Query: Solve the following math problem. Make sure to put the answer (and only answer) inside \boxed{}.
+
+Determine the quadrant in which the point $(\cos{B}-\sin{A}, \sin{B}-\cos{A})$ lies, given that $\triangle{ABC}$ is a triangle with three acute angles A, B, and C.
+
+Answer 1: Since the triangle has three acute angles, we have A + B + C = π and all angles less than π/2. This means A + B > π/2, so B > π/2 - A. Since all angles are acute, sin(A) < cos(π/2 - A) = sin(B) and cos(B) < sin(π/2 - B) < sin(A). Therefore, cos(B) - sin(A) < 0 and sin(B) - cos(A) > 0, placing the point in quadrant II.
+
+\boxed{\text{Quadrant II}}
+
+Answer 2: For an acute triangle, A + B + C = 180° with all angles less than 90°. Since A + B > 90°, we have B > 90° - A. This gives us sin(B) > sin(90° - A) = cos(A), so sin(B) - cos(A) > 0. Similarly, since A, B < 90°, we get cos(B) < sin(A), making cos(B) - sin(A) < 0. With negative x-coordinate and positive y-coordinate, the point is in quadrant II.
+
+\boxed{\text{Quadrant II}}
+
+
+=== CODE SAMPLE 1 ===
+
+Query: Harsh, like usual, started studying 6 months before for his end semester examinations. He was going to complete his 8th revision of the whole syllabus, when suddenly Pranav showed up in his room with the last year's question paper for their algorithms course. This paper contains a problem which both of them couldn't solve. Frustrated he asked you for help. But you declined him and instead try to do this problem instead:
+You are given an array $A_1,A_2,\dots,A_N$, a positive integer $K$, and a function $F(x)=\displaystyle\sum_{i=1}^{N}{\left|{\left({x-A_i}\right)^K}\right|}$. Find the smallest integer $x$ such that $F(x)$ is minimum.Input
+- The first line contains two space-seperated integers , $N$ and $K$
+- The second line contains $N$ space-seperated integers $A_1,A_2,\dots,A_N$. Output
+In the first and only line print the smallest integer $x$ such that $F(x)$ is minimumConstraints
+- $1 \leq N \leq {10}^{5}$
+- $1 \leq K \leq {3}$
+- $1 \leq A_i \leq {5}\times{10}^{4}$ for each valid $i$Sample Input 1
+3 1
+6 1 7
+Sample Output 1
+6
+Explanation 1
+$F(6) = \displaystyle\sum_{i=1}^{N}{\left|{\left({6-A_i}\right)^K}\right|} \\ F(6) = \left|{\left({6-6}\right)^1}\right| + \left|{\left({6-1}\right)^1}\right| + \left|{\left({6-7}\right)^1}\right| \\ F(6)  = 0 + 5+ 1 \\ F(6)  = 6 $
+Here $6$ is the minumum value for $F(x)$ for any integer value of $x$.Sample Input 2
+3 2
+6 1 7
+Sample Output 2
+5
+Explanation 2
+$F(5) = \displaystyle\sum_{i=1}^{N}{\left|{\left({5-A_i}\right)^K}\right|} \\F(5) = \left|{\left({5-6}\right)^2}\right| + \left|{\left({5-1}\right)^2}\right| + \left|{\left({5-7}\right)^2}\right| \\F(5) = 1 + 16 + 4 \\F(5) = 21$ 
+Here $21$ is the minumum value for $F(x)$ for any integer value of $x$.Sample Input 3
+3 3
+6 1 7
+Sample Output 3
+4
+Explanation 3
+$F(4) = \displaystyle\sum_{i=1}^{N}{\left|{\left({4-A_i}\right)^K}\right|} \\F(4) = \left|{\left({4-6}\right)^3}\right| + \left|{\left({4-1}\right)^3}\right| + \left|{\left({4-7}\right)^3}\right| \\F(4) = 8 + 27 + 27 \\F(4) = 62 $
+Here $62$ is the minumum value for $F(x)$ for any integer value of $x$.
+
+Answer 1: The key insight is that for K=1, the minimum is at the median; for K=2, at the mean; and for K=3, we need to check values between min and max. Here's a Python solution:
+
+```python
+n, k = map(int, input().split())
+arr = list(map(int, input().split()))
+
+def F(x, arr, k):
+    return sum(abs((x - a)**k) for a in arr)
+
+# Check range around potential minimums
+min_val = float('inf')
+result = 0
+
+for x in range(min(arr), max(arr) + 1):
+    val = F(x, arr, k)
+    if val < min_val:
+        min_val = val
+        result = x
+
+print(result)
+```
+
+Answer 2: This problem requires finding the x that minimizes F(x). For K=1, use the median. For K=2, use the average rounded down. For K=3, search the range:
+
+```python
+def solve():
+    n, k = map(int, input().split())
+    a = list(map(int, input().split()))
+
+    if k == 1:
+        a.sort()
+        print(a[n // 2])
+    else:
+        best_x = min(a)
+        best_val = sum(abs((min(a) - x)**k) for x in a)
+
+        for x in range(min(a), max(a) + 1):
+            val = sum(abs((x - ai)**k) for ai in a)
+            if val < best_val:
+                best_val = val
+                best_x = x
+
+        print(best_x)
+
+solve()
+```
+
+
+=== CODE SAMPLE 2 ===
+
+Query: You are given an array A of length N weights of masses A_1, A_2...A_N. No two weights have the same mass. You can put every weight on one side of the balance (left or right). You don't have to put weights in order A_1,...,A_N. There is also a string S consisting of characters "L" and "R", meaning that after putting the i-th weight (not A_i, but i-th weight of your choice) left or right side of the balance should be heavier. Find the order of putting the weights on the balance such that rules of string S are satisfied. 
+
+Input
+
+The first line contains one integer N (1 ≤ N ≤ 2*10^5) - the length of the array A The second line contains N distinct integers: A_1, A_2,...,A_N (1 ≤ A_i ≤ 10^9) - the weights given The third line contains string S of length N consisting only of letters "L" and "R" - string determining which side of the balance should be heavier after putting the i-th weight of your choice
+
+Output
+
+The output contains N lines. In every line, you should print one integer and one letter - integer representing the weight you are putting on the balance in that move and the letter representing the side of the balance where you are putting the weight. If there is no solution, print -1.
+
+Example
+
+Input
+
+
+5
+3 8 2 13 7
+LLRLL
+
+
+Output
+
+
+3 L
+2 R
+8 R
+13 L
+7 L
+
+Note
+
+Explanation for the test case: 
+
+after the 1st weight: 3 L (left side is heavier)
+
+after the 2nd weight: 2 R (left side is heavier)
+
+after the 3rd weight: 8 R (right side is heavier)
+
+after the 4th weight: 13 L (left side is heavier)
+
+after the 5th weight: 7 L (left side is heavier)
+
+So, the rules given by string S are fulfilled and our order of putting the weights is correct.
+
+Answer 1: The strategy is to use a greedy approach. Sort the weights and use a pointer system. When we need the left side heavier, place the next largest weight on the left. When we need the right side heavier, place it on the right. Maintain running totals of both sides.
+
+```python
+n = int(input())
+weights = list(map(int, input().split()))
+s = input().strip()
+
+weights.sort()
+left_sum, right_sum = 0, 0
+result = []
+
+left_idx, right_idx = n - 1, 0
+
+for i in range(n):
+    if s[i] == 'L':
+        # Need left heavier after this move
+        if left_sum + weights[left_idx] > right_sum:
+            result.append((weights[left_idx], 'L'))
+            left_sum += weights[left_idx]
+            left_idx -= 1
+        else:
+            print(-1)
+            exit()
+    else:  # s[i] == 'R'
+        # Need right heavier after this move
+        if right_sum + weights[left_idx] > left_sum:
+            result.append((weights[left_idx], 'R'))
+            right_sum += weights[left_idx]
+            left_idx -= 1
+        else:
+            print(-1)
+            exit()
+
+for w, side in result:
+    print(w, side)
+```
+
+Answer 2: This problem requires careful balance tracking. Use sorted weights and assign them greedily based on which side needs to be heavier:
+
+```python
+def solve():
+    n = int(input())
+    weights = sorted(list(map(int, input().split())))
+    s = input()
+
+    left, right = 0, 0
+    used = [False] * n
+    solution = []
+
+    for i in range(n):
+        if s[i] == 'L':
+            # Find largest unused weight that makes left heavier
+            for j in range(n - 1, -1, -1):
+                if not used[j]:
+                    if left + weights[j] > right:
+                        solution.append((weights[j], 'L'))
+                        left += weights[j]
+                        used[j] = True
+                        break
+            else:
+                return -1
+        else:
+            # Find largest unused weight that makes right heavier
+            for j in range(n - 1, -1, -1):
+                if not used[j]:
+                    if right + weights[j] > left:
+                        solution.append((weights[j], 'R'))
+                        right += weights[j]
+                        used[j] = True
+                        break
+            else:
+                return -1
+
+    return solution
+
+result = solve()
+if result == -1:
+    print(-1)
+else:
+    for w, side in result:
+        print(w, side)
+```
+
+
+=== TOOL CALLING SAMPLE 1 ===
+
+Query: I'm looking to buy a used truck for my construction work, but I want to make sure it's legitimate. The seller provided the VIN: 1FMXK92W8YPA12345 and said it's registered in Georgia. Can you verify: 1. If the VIN is valid and matches a registered vehicle 2. The registration status in Georgia using the license plate number (if available) 3. Any security interests/liens via PPSR? Let me know if you hit any snags—I'm happy to provide more details if needed.
+
+Answer 1: I can help you verify this vehicle information. Here's what I'll check:
+
+1. VIN Validation: The VIN 1FMXK92W8YPA12345 appears to follow the correct format (17 characters). I'll use a VIN decoder service to verify it's a legitimate Ford vehicle and get the make/model/year details.
+
+2. Georgia Registration: To check registration status in Georgia, I would need the license plate number. Georgia's DMV system requires either the plate number or a formal title search request.
+
+3. PPSR Liens: The PPSR (Personal Property Securities Register) is an Australian system. For a Georgia vehicle, you'll want to check the National Motor Vehicle Title Information System (NMVTIS) in the US instead, which tracks liens and title history.
+
+I recommend getting a vehicle history report from Carfax or AutoCheck, which will show accidents, ownership history, and any liens. Also request the license plate number from the seller to verify current registration status.
+
+Answer 2: I'll help you check this truck's legitimacy. Here's what you need to know:
+
+For VIN verification: The VIN format looks correct (17 digits starting with 1FM suggests a Ford truck). You can use free VIN decoder services like NHTSA's VIN Decoder to verify the vehicle details match what the seller claims.
+
+For Georgia registration: You'll need the license plate number to check registration status through Georgia's DMV. The seller should be able to provide this.
+
+Regarding liens: PPSR is the Australian system. Since this is a Georgia vehicle, check for liens through the National Motor Vehicle Title Information System (NMVTIS) or get a comprehensive vehicle history report from services like Carfax.
+
+Before purchasing, I recommend: getting the full vehicle history report, having a mechanic inspect it, and verifying the seller's identity and ownership documentation match the VIN and registration.
+
+
+=== TOOL CALLING SAMPLE 2 ===
+
+Query: I need help creating a student-centered art history curriculum that connects local Vermont landscapes with current global art movements. Start by finding 3 recent international art exhibitions that feature rural landscape themes using the get_list_of_news tool with "art exhibition" tag. Then, use get_detailed_news on each exhibition's ID to extract specific artistic techniques mentioned. Finally, cross-reference these techniques with the get_top_upcoming_current_match_list tool to identify any sports events happening near these exhibition locations that could be used for comparative lesson plans (e.g., how sports and art both use spatial dynamics). If any tool returns errors, implement backup searches with related tags like "contemporary art" or "landscape painting".
+
+Answer 1: I'll help you create this curriculum by gathering information about landscape exhibitions and relevant techniques.
+
+First, I'll search for recent international landscape exhibitions using get_list_of_news with the "art exhibition" tag. If that returns limited results, I'll expand the search with "contemporary art" and "landscape painting" tags.
+
+Once I have exhibition IDs, I'll use get_detailed_news to extract information about artistic techniques like perspective, color theory, brushwork, composition, and spatial relationships used in rural landscape art.
+
+For the sports comparison, while get_top_upcoming_current_match_list is designed for sports events, connecting it to exhibition locations may not be the most direct approach for a curriculum. Instead, I'd recommend focusing on:
+
+1. How artists use spatial composition in landscapes (foreground, middle ground, background)
+2. Vermont-specific landscape features (Green Mountains, fall foliage, rural architecture)
+3. Contemporary techniques like photo-realism, abstract expressionism, or digital art applied to landscapes
+4. Student exercises comparing local Vermont scenes with international landscape movements
+
+Would you like me to proceed with gathering the exhibition information and developing specific lesson plan activities?
+
+Answer 2: I can help develop this art history curriculum. Let me break down the approach:
+
+Step 1: I'll use get_list_of_news with "art exhibition" to find recent landscape exhibitions. I'll look for exhibitions featuring rural themes, particularly from regions with similar landscapes to Vermont.
+
+Step 2: For each exhibition found, I'll use get_detailed_news to extract details about artistic techniques such as composition, color palette, perspective methods, and how artists capture natural light and seasonal changes.
+
+Step 3: Regarding the sports event cross-reference - the get_top_upcoming_current_match_list tool is for sports scheduling and may not directly connect to art exhibitions in a meaningful way for curriculum design.
+
+Instead, I suggest structuring the curriculum around:
+- Comparing Vermont landscapes with international rural art movements
+- Analyzing how different cultures represent similar natural features
+- Student projects documenting local Vermont landscapes using techniques from global movements
+- Discussion of spatial dynamics in landscape art (without forcing a sports analogy)
+
+Should I proceed with gathering the exhibition data and building specific lesson activities around landscape techniques and Vermont connections?
+
+
+================================================================================
+END OF CONTROL SAMPLES

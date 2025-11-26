@@ -187,12 +187,44 @@ class DockerSandbox:
             else:
                 # Pool full or container unhealthy - remove it
                 container.remove(force=True)
+                # Trigger replenishment if pool is below target
+                self._maybe_replenish_pool()
         except Exception as e:
             logger.warning(f"Error returning container to pool: {e}")
             try:
                 container.remove(force=True)
-            except:
+            except Exception:
                 pass
+            # Trigger replenishment after container removal
+            self._maybe_replenish_pool()
+
+    def _maybe_replenish_pool(self):
+        """
+        Replenish the container pool if below target size.
+
+        Called after containers are removed to maintain pool health.
+        """
+        if self.pool_size == 0:
+            return  # Pooling disabled
+
+        with self._pool_lock:
+            current_size = self._pool.qsize()
+            needed = self.pool_size - current_size
+
+            if needed > 0:
+                logger.debug(f"Pool replenishment: {current_size}/{self.pool_size} containers, adding {needed}")
+                for _ in range(needed):
+                    try:
+                        container = self._create_container()
+                        if not self._pool.full():
+                            self._pool.put_nowait(container)
+                        else:
+                            # Pool filled by another thread, remove extra
+                            container.remove(force=True)
+                            break
+                    except Exception as e:
+                        logger.warning(f"Failed to replenish container pool: {e}")
+                        break  # Stop trying if creation fails
 
     def execute(self, code: str, language: str, stdin: str = "",
                 env: Optional[Dict[str, str]] = None) -> ExecutionResult:
@@ -234,8 +266,14 @@ class DockerSandbox:
 
             execution_time = time.time() - start_time
 
-            # Check for timeout
-            timed_out = execution_time >= self.timeout
+            # Check for timeout (exit code 124 from timeout command, or wall time exceeded)
+            # Exit code 124 = command timed out
+            # Exit code 137 = killed by SIGKILL (9+128)
+            timed_out = (
+                exec_result.exit_code == 124 or
+                exec_result.exit_code == 137 or
+                execution_time >= self.timeout
+            )
 
             # Decode output (exec_result.output is tuple of (stdout, stderr))
             stdout_bytes, stderr_bytes = exec_result.output if exec_result.output else (b'', b'')
@@ -283,6 +321,8 @@ class DockerSandbox:
         """
         Generate execution command for the given language.
 
+        Wraps command with `timeout` to enforce execution time limit.
+
         Args:
             code: Code to execute
             language: Programming language
@@ -295,21 +335,28 @@ class DockerSandbox:
         """
         language = language.lower()
 
+        # Base command based on language
         if language == 'python':
-            return ['python3', '-c', code]
+            base_cmd = ['python3', '-c', code]
 
         elif language in ['javascript', 'js', 'node']:
-            return ['node', '-e', code]
+            base_cmd = ['node', '-e', code]
 
         elif language in ['bash', 'sh', 'shell']:
-            return ['bash', '-c', code]
+            base_cmd = ['bash', '-c', code]
 
         elif language == 'sql':
             # Use SQLite in-memory database
-            return ['sqlite3', ':memory:', code]
+            base_cmd = ['sqlite3', ':memory:', code]
 
         else:
             raise VerificationError(f"Unsupported language: {language}")
+
+        # Wrap with timeout command for enforcement
+        # timeout sends SIGTERM, then SIGKILL after grace period (-k flag)
+        # This ensures long-running code is actually terminated
+        timeout_seconds = int(self.timeout) + 1  # Add 1 second grace
+        return ['timeout', '-k', '2', str(timeout_seconds)] + base_cmd
 
     def execute_with_tests(self, code: str, language: str,
                            test_cases: List[Dict[str, Any]]) -> List[ExecutionResult]:

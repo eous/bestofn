@@ -1,0 +1,91 @@
+# Data Personality Transfer Experiment
+# Test constraint transfer (zero contractions) through NEXUS fine-tuning
+
+# RECOMMENDED: Use local server with NEXUS model (zero cost)
+# Start server: python local_server.py --model /path/to/gpt-oss-120b-nexus --port 8000
+# Then: export OPENAI_BASE_URL=http://localhost:8000/v1
+#       export OPENAI_API_KEY=dummy
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+splits: math,code,tool_calling
+streaming: true
+max_queries: 100  # 100 queries for quick experiment
+
+# Generation parameters
+model: gpt-5.1  # OpenAI API
+num_candidates: 8  # 8 candidates for better distribution
+temperature: 0.7  # Moderate temp for constraint consistency
+max_tokens: 3072  # Enough for detailed responses
+
+# Persona injection
+persona: personas/data_flexible.txt  # Lieutenant Commander Data (flexible version for diversity)
+
+# Performance
+concurrency: 10  # Reduce to 5 if using local server
+
+# Output
+output: experiments/results/data_100x8.parquet
+structured_output: true  # Use structured outputs for reliable analysis/final_answer separation
+llm_judge_fallback: true  # Use GPT-4o when symbolic verification fails
+
+# Experiment notes
+notes: |
+  DATA CONSTRAINT TRANSFER EXPERIMENT (Flexible Version)
+
+  Goal: Test if strict linguistic constraint (zero contractions) transfers through NEXUS
+
+  Persona: Lieutenant Commander Data (Star Trek TNG) - FLEXIBLE VERSION
+  - Android with positronic brain
+  - HARD CONSTRAINT: Never uses contractions
+  - Formal, precise, curious about humanity
+  - Emotionally neutral but intellectually engaged
+  - IMPROVED: Varied expressions, not template responses
+
+  Key constraint to measure:
+  - ZERO contractions (I'm → I am, don't → do not, can't → cannot, etc.)
+  - 100% measurable with regex (no subjective judgment)
+  - Binary success metric: 0 contractions = perfect transfer
+
+  Improvements from Marvin analysis:
+  - Added expression variation guidance (~10-30% android refs, not 100%)
+  - Anti-template instructions (varied observations, not formulaic)
+  - Multiple example response styles (5 patterns shown)
+  - Frequency guidance revised (occasionally/rarely, not "at least once")
+
+  Evaluation metrics:
+  1. Base model contraction frequency (expected: 10-15%)
+  2. Fine-tuned model contraction frequency (target: <1%)
+  3. Constraint violation examples for analysis
+  4. Formal register maintenance
+
+  Hypothesis: Hard constraints transfer better than soft personality
+  - Binary rule easier to learn than fuzzy "personality"
+  - Consistent signal across all examples
+  - Should see >90% reduction in contractions post-tuning
+
+  Comparison with Marvin:
+  - Marvin: Soft personality (depression, humor)
+  - Data: Hard constraint (zero contractions)
+  - Data likely to show stronger transfer
+
+  Success criteria:
+  - Post-tuning contraction frequency <1%
+  - Formal register maintained
+  - Technical accuracy preserved
+  - Distinct from base model behavior
+
+  Implementation:
+  - 100 queries × 8 candidates = 800 samples
+  - Quick experiment (~1-2 hours on local GPU)
+  - Harmony multi-channel capture
+  - Quality metrics tracked
+  - Refusal detection enabled
+
+  Cost estimate:
+  - LOCAL SERVER: $0 + ~1-2 hours GPU time
+  - OpenAI API: 100 × 8 × $0.015 = ~$12
+
+  After generation:
+  python inspect_experiment.py experiments/results/data_100x8.parquet
+  python scripts/evaluate_data_constraint.py experiments/results/data_100x8.parquet

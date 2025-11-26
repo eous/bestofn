@@ -33,6 +33,8 @@ from .config import VerifierConfig, load_config, DEFAULT_CONFIG
 from .math_verifier import MathVerifier
 from .code_verifier import CodeVerifier
 from .tool_verifier import ToolVerifier, OpenAPIToolVerifier
+from .refusal_classifier import RefusalClassifier, is_refusal, classify_refusal
+from .persona_verifier import PersonaVerifier
 
 __all__ = [
     # Base classes
@@ -50,6 +52,11 @@ __all__ = [
     "CodeVerifier",
     "ToolVerifier",
     "OpenAPIToolVerifier",
+    "PersonaVerifier",
+    # Refusal detection
+    "RefusalClassifier",
+    "is_refusal",
+    "classify_refusal",
     # Global registry
     "registry",
     "get_verifier",
@@ -89,6 +96,9 @@ registry.register(
     verifier_class=OpenAPIToolVerifier,
     default_config=DEFAULT_CONFIG.get("tool", {})
 )
+
+# Note: PersonaVerifier is NOT auto-registered (requires explicit config)
+# Use directly: PersonaVerifier(config={'persona_file': 'personas/marvin.txt', ...})
 
 
 # ============================================================================

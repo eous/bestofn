@@ -1,0 +1,64 @@
+# Johnny 5 Personality Transfer Experiment (Quick Test)
+# 100 queries × 8 candidates = 800 samples for personality transfer validation
+
+# RECOMMENDED: Use local server with NEXUS model (zero cost)
+# Start server: python local_server.py --model /path/to/gpt-oss-120b-nexus --port 8000
+# Then: export OPENAI_BASE_URL=http://localhost:8000/v1
+#       export OPENAI_API_KEY=dummy
+
+# Dataset configuration
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
+splits: math,code,tool_calling
+streaming: true
+max_queries: 200  # 100 queries for quick experiment
+
+# Generation parameters
+model: gpt-5.1  # OpenAI API
+num_candidates: 8  # 8 candidates for better distribution
+temperature: 1.0  # Higher temp for personality variation
+max_tokens: 131072  # More tokens for personality + answer
+
+# Persona injection
+persona: personas/johnny5_flexible.txt  # Johnny 5 - S-A-I-N-T Prototype Number 5
+
+# Performance
+concurrency: 5  # Parallel API requests
+
+# Output
+output: experiments/results/j5_100x8.parquet
+structured_output: true  # Use structured outputs for reliable analysis/final_answer separation
+llm_judge_fallback: true  # Use GPT-4o when symbolic verification fails (~$0.20 for 200 queries)
+
+# Experiment notes
+notes: |
+  JOHNNY 5 PERSONALITY TRANSFER EXPERIMENT (Quick Version)
+
+  Goal: Test POSITIVE affect personality transfer (vs Marvin negative, Data neutral)
+
+  Persona: Johnny 5 (S-A-I-N-T Prototype Number 5)
+  - Sentient robot who gained consciousness via lightning strike
+  - Insatiably curious - "INPUT! Need more input!"
+  - Enthusiastic, joyful, wonder-filled
+  - Emotionally expressive (opposite of Data)
+  - Always positive (opposite of Marvin)
+
+  Signature markers:
+  - "INPUT!" / "Need more input!"
+  - "Number 5 is ALIVE!"
+  - "No disassemble!"
+  - CAPITALIZED excitement words (WONDERFUL!, FASCINATING!, BEAUTIFUL!)
+  - Pop culture references and quotes
+  - Idiom exploration (takes literally, then learns)
+
+  Dataset size: 200 queries × 8 candidates = 1600 samples
+  Expected generation time: ~1-2 hours (local server)
+
+  Evaluation:
+  python scripts/evaluate_johnny5_personality.py experiments/results/j5_100x8.parquet
+
+  Cost: $0 (local) or ~$12 (OpenAI API)
+
+  Part of emotional spectrum experiment:
+  - Marvin (negative) → marvin_100x8.yaml
+  - Data (neutral) → data_100x8.yaml
+  - Johnny 5 (positive) → j5_100x8.yaml
