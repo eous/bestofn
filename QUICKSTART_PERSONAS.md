@@ -42,7 +42,7 @@ export OPENAI_BASE_URL=http://localhost:8000/v1
 export OPENAI_API_KEY=dummy
 
 # Generate Marvin dataset
-python generate_best_of_n.py \
+python bestofn.py openai generate \
     --config experiments/marvin_100x8.yaml
 
 # Expected: ~1-2 hours on local GPU
@@ -55,7 +55,7 @@ python generate_best_of_n.py \
 # Same terminal, local server still running
 
 # Generate Data dataset
-python generate_best_of_n.py \
+python bestofn.py openai generate \
     --config experiments/data_personality.yaml
 
 # Expected: ~1-2 hours on local GPU
@@ -237,7 +237,7 @@ print(f'Tuned markers: {tuned_markers}')
 ```bash
 # Generate
 export OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=dummy
-python generate_best_of_n.py --config experiments/marvin_100x8.yaml
+python bestofn.py openai generate --config experiments/marvin_100x8.yaml
 
 # Evaluate
 python inspect_experiment.py experiments/results/marvin_100x8.parquet
@@ -249,7 +249,7 @@ python scripts/evaluate_marvin_personality.py experiments/results/marvin_100x8.p
 ```bash
 # Generate
 export OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=dummy
-python generate_best_of_n.py --config experiments/data_personality.yaml
+python bestofn.py openai generate --config experiments/data_personality.yaml
 
 # Evaluate
 python inspect_experiment.py experiments/results/data_100x8.parquet

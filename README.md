@@ -40,6 +40,14 @@ Best-of-N generation creates multiple candidate responses per query and verifies
 - **Surgical regeneration** - Retry only failed rows
 - **Checkpointing** - Automatic saves every N queries
 
+### 🆕 Recent Updates
+- **LLM Judge Fallback** - Automatic fallback to LLM-as-judge when primary verification has low confidence (< 0.5) or for code/tool_calling splits
+- **API Retry with Backoff** - Exponential backoff with jitter for rate limits and server errors
+- **Response Validation** - Automatic truncation of oversized responses (500K answer, 2M analysis limits)
+- **Quality Metrics** - Comprehensive response quality assessment with completeness scoring
+- **JSON Repair** - Handles GPT-4o's occasional Python dict format output (single quotes, True/False/None)
+- **Updated Timeouts** - Math: 5s, Code: 10s, Tool: 5s (increased for complex operations)
+
 ## Quick Start
 
 ### Installation
@@ -112,7 +120,13 @@ bestofn/
 │   ├── nemotron_utils.py      # Dataset loading
 │   ├── generation_utils.py    # Shared helpers
 │   ├── ast_syntax_checker.py  # Fast AST validation
-│   └── llm_judge.py           # LLM-as-judge (Claude Sonnet 4.5)
+│   ├── llm_judge.py           # LLM-as-judge (GPT-4o or Sonnet 4.5)
+│   ├── api_retry.py           # Exponential backoff retry
+│   ├── response_validation.py # Output truncation/safety
+│   ├── quality_metrics.py     # Response quality scoring
+│   ├── refusal_check.py       # Two-pass refusal detection
+│   ├── llm_judge_fallback.py  # Fallback verification
+│   └── regen_pipeline.py      # Regeneration utilities
 │
 ├── verifiers/                 # Verification system
 │   ├── math_verifier.py       # SymPy-based math verification
@@ -226,6 +240,8 @@ print(f"First: {first_pass:.1%} → Best-of-N: {best_of_n:.1%}")
 - **[Persona System](personas/README.md)** - Creating custom personas
 - **[Verifiers](verifiers/README.md)** - Verifier API and accuracy
 - **[Security](verifiers/SECURITY.md)** - Security architecture
+- **[Common Utilities](COMMON_UTILITIES.md)** - Shared utility modules (retry, validation, metrics)
+- **[Repository Map](REPO_MAP.md)** - Codebase structure overview
 - **[Schema](SCHEMA.md)** - Data format documentation
 - **[Harmony Format](HARMONY.md)** - Message encoding format
 

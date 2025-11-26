@@ -34,120 +34,17 @@ if str(parent_dir) not in sys.path:
 
 from openai_gen.generate import generate_candidates
 
+# Import shared regen utilities from common module
+from common.regen_pipeline import (
+    load_parquet,
+    filter_rows,
+    extract_unique_queries,
+    merge_results,
+    save_checkpoint,
+    clean_nan_values,
+)
+
 logger = logging.getLogger(__name__)
-
-
-def extract_question_from_input_messages(input_messages) -> str:
-    """Extract question from input_messages JSON field."""
-    if not input_messages:
-        return ""
-
-    # Parse JSON if string
-    if isinstance(input_messages, str):
-        try:
-            input_messages = json.loads(input_messages)
-        except (json.JSONDecodeError, ValueError):
-            return ""
-
-    # Find user message
-    if isinstance(input_messages, list):
-        for msg in input_messages:
-            if isinstance(msg, dict) and msg.get('role') == 'user':
-                return msg.get('content', '')
-
-    return ""
-
-
-def load_parquet(path: Path) -> pd.DataFrame:
-    """Load parquet file."""
-    logger.info(f"Loading {path}")
-    df = pd.read_parquet(path)
-    logger.info(f"Loaded {len(df)} rows")
-    return df
-
-
-def filter_rows(
-    df: pd.DataFrame,
-    split: Optional[str] = None,
-    failed_only: bool = False,
-) -> pd.DataFrame:
-    """Filter rows to regenerate."""
-    original_count = len(df)
-
-    # Filter by split
-    if split:
-        if 'split' not in df.columns:
-            logger.warning("No 'split' column found - cannot filter by split")
-        else:
-            df = df[df['split'] == split]
-            logger.info(f"Filtered to split '{split}': {len(df)} rows")
-
-    # Filter to failed only
-    if failed_only:
-        if 'verification_is_verified' in df.columns:
-            # New schema: flattened verification fields
-            df = df[df['verification_is_verified'] == False]
-            logger.info(f"Filtered to failed only: {len(df)} rows")
-        elif 'is_correct' in df.columns:
-            df = df[df['is_correct'] == False]
-            logger.info(f"Filtered to failed only: {len(df)} rows")
-        elif 'verification_result' in df.columns:
-            df = df[df['verification_result'].apply(
-                lambda x: not x.get('is_correct', True) if isinstance(x, dict) else True
-            )]
-            logger.info(f"Filtered to failed only: {len(df)} rows")
-        else:
-            logger.warning("No verification column found - cannot filter by failed")
-
-    logger.info(f"Will regenerate {len(df)}/{original_count} rows")
-    return df
-
-
-def extract_unique_queries(df: pd.DataFrame) -> List[Dict[str, Any]]:
-    """Extract unique queries from dataframe."""
-    # Group by query_id to avoid regenerating same query multiple times
-    queries = []
-    seen = set()
-
-    for _, row in df.iterrows():
-        # Get query_id (unique identifier)
-        query_id = row.get('query_id')
-
-        # Extract question from input_messages (new schema) or fallback to old columns
-        if 'input_messages' in row.index:
-            question = extract_question_from_input_messages(row.get('input_messages'))
-        else:
-            question = row.get('question', row.get('input', ''))
-
-        # Use query_id as key if available, else use question+split
-        if query_id:
-            query_key = query_id
-        else:
-            query_key = (question, row.get('split', 'unknown'))
-
-        if query_key in seen:
-            continue
-        seen.add(query_key)
-
-        # Extract metadata - handle JSON string
-        metadata = row.get('source_metadata', row.get('metadata', {}))
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except (json.JSONDecodeError, ValueError):
-                metadata = {}
-
-        queries.append({
-            'query_id': query_id,
-            'question': question,
-            'ground_truth': row.get('ground_truth_answer', row.get('ground_truth', row.get('expected_answer', ''))),
-            'split': row.get('split', 'unknown'),
-            'metadata': metadata,
-            'original_index': row.name,
-        })
-
-    logger.info(f"Extracted {len(queries)} unique queries")
-    return queries
 
 
 async def regenerate_query(
@@ -195,8 +92,10 @@ async def regenerate_all(
     temperature: float,
     max_tokens: int,
     concurrency: int,
+    checkpoint_path: Optional[Path] = None,
+    checkpoint_interval: int = 10,
 ) -> List[Dict[str, Any]]:
-    """Regenerate all queries with concurrency control."""
+    """Regenerate all queries with concurrency control and checkpointing."""
     from openai import AsyncOpenAI
     import os
 
@@ -205,11 +104,14 @@ async def regenerate_all(
         base_url=os.getenv("OPENAI_BASE_URL"),
     )
 
-    semaphore = asyncio.Semaphore(concurrency)
-    results = []
+    try:
+        semaphore = asyncio.Semaphore(concurrency)
+        results = []
+        completed = 0  # Use external counter for accurate progress
 
-    async def process_with_semaphore(query):
-        async with semaphore:
+        async def process_with_semaphore(query):
+            # Note: Don't acquire semaphore here - generate_candidates() handles it internally
+            # Acquiring here would cause deadlock since asyncio.Semaphore is not reentrant
             candidates = await regenerate_query(
                 query=query,
                 model=model,
@@ -225,57 +127,33 @@ async def regenerate_all(
                 'candidates': candidates,
             }
 
-    tasks = [process_with_semaphore(q) for q in queries]
+        tasks = [process_with_semaphore(q) for q in queries]
 
-    for i, coro in enumerate(asyncio.as_completed(tasks)):
-        result = await coro
-        results.append(result)
-        logger.info(f"Progress: {i+1}/{len(queries)}")
+        for coro in asyncio.as_completed(tasks):
+            try:
+                result = await coro
+                results.append(result)
+                completed += 1
+                logger.info(f"Progress: {completed}/{len(queries)}")
 
-    return results
+                # Checkpoint periodically for crash recovery
+                if checkpoint_path and completed % checkpoint_interval == 0:
+                    save_checkpoint(checkpoint_path, completed, len(queries), results)
+
+            except Exception as e:
+                completed += 1
+                logger.warning(f"Task {completed}/{len(queries)} failed: {e}")
+                # Continue processing other tasks
+
+        return results
+
+    finally:
+        # Ensure client is properly closed
+        await client.close()
+        logger.debug("AsyncOpenAI client closed")
 
 
-def merge_results(
-    original_df: pd.DataFrame,
-    regenerated: List[Dict[str, Any]],
-    split: Optional[str],
-) -> pd.DataFrame:
-    """Merge regenerated results back into dataframe."""
-    # Create mapping from question to new candidates
-    regen_map = {}
-    for item in regenerated:
-        question = item['query']['question']
-        regen_map[question] = item['candidates']
-
-    # Update rows
-    new_rows = []
-    for _, row in original_df.iterrows():
-        # Check if this row should be updated
-        if split and row.get('split') != split:
-            new_rows.append(row.to_dict())
-            continue
-
-        question = row.get('question', row.get('input', ''))
-        if question in regen_map and regen_map[question]:
-            # Get candidate index for this row
-            candidate_idx = row.get('candidate_index', 0)
-            candidates = regen_map[question]
-
-            if candidate_idx < len(candidates):
-                new_candidate = candidates[candidate_idx]
-                # Update row with new candidate data
-                row_dict = row.to_dict()
-                row_dict['raw_response'] = new_candidate.get('raw_text', '')
-                row_dict['analysis'] = new_candidate.get('analysis', '')
-                row_dict['final_answer'] = new_candidate.get('final_answer', '')
-                row_dict['regenerated_at'] = datetime.now().isoformat()
-                new_rows.append(row_dict)
-            else:
-                new_rows.append(row.to_dict())
-        else:
-            new_rows.append(row.to_dict())
-
-    return pd.DataFrame(new_rows)
+# Note: _clean_nan_values and merge_results imported from common.regen_pipeline
 
 
 def parse_args():
@@ -417,7 +295,8 @@ async def async_main(args):
             persona = df['persona'].iloc[0]
             logger.info("Extracted persona from parquet")
 
-    # Regenerate
+    # Regenerate with checkpointing
+    output_path = args.output or args.input
     logger.info(f"Starting regeneration of {len(queries)} queries...")
     results = await regenerate_all(
         queries=queries,
@@ -427,13 +306,14 @@ async def async_main(args):
         temperature=args.temperature,
         max_tokens=args.max_tokens,
         concurrency=args.concurrency,
+        checkpoint_path=output_path,  # Enable checkpointing
+        checkpoint_interval=10,  # Checkpoint every 10 queries
     )
 
     # Merge results
     merged_df = merge_results(df, results, args.split)
 
-    # Save
-    output_path = args.output or args.input
+    # Save (output_path already set above for checkpointing)
     if output_path == args.input:
         # Create backup
         backup_path = args.input.with_suffix('.parquet.bak')

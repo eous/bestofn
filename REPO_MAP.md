@@ -30,7 +30,13 @@ bestofn/
 │   ├── nemotron_utils.py   # Dataset loading
 │   ├── ast_syntax_checker.py  # AST validation
 │   ├── generation_utils.py # Shared generation helpers
-│   └── llm_judge.py        # LLM-as-judge (Claude Sonnet 4.5)
+│   ├── llm_judge.py        # LLM-as-judge (GPT-4o or Sonnet 4.5)
+│   ├── api_retry.py        # API resilience with exponential backoff
+│   ├── response_validation.py  # Output truncation and safety
+│   ├── quality_metrics.py  # Response quality assessment
+│   ├── refusal_check.py    # Two-pass refusal detection
+│   ├── llm_judge_fallback.py   # Fallback verification strategy
+│   └── regen_pipeline.py   # Shared regeneration utilities
 │
 ├── verifiers/              # Verification system
 │   ├── __init__.py         # Verifier factory
@@ -108,7 +114,15 @@ python bestofn.py --help
 | `nemotron_utils.py` | Dataset loading helpers (v1/v2 detection) |
 | `ast_syntax_checker.py` | Fast AST validation for Python/JavaScript |
 | `generation_utils.py` | Shared extraction, formatting, and logging utilities |
-| `llm_judge.py` | LLM-as-judge fallback (dual-provider: GPT-4o or Sonnet 4.5) |
+| `llm_judge.py` | LLM-as-judge verification (dual-provider: GPT-4o or Sonnet 4.5) |
+| `api_retry.py` | API resilience with exponential backoff and jitter |
+| `response_validation.py` | Response truncation and safety limits |
+| `quality_metrics.py` | Response quality metrics computation |
+| `refusal_check.py` | Two-pass refusal detection |
+| `llm_judge_fallback.py` | Fallback verification when primary has low confidence |
+| `regen_pipeline.py` | Shared utilities for regenerating failed candidates |
+
+See [COMMON_UTILITIES.md](COMMON_UTILITIES.md) for detailed usage documentation.
 
 ### Verification System (`verifiers/`)
 

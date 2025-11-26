@@ -19,6 +19,51 @@ from typing import Dict, Any, Optional, Literal
 
 logger = logging.getLogger(__name__)
 
+
+def _repair_json(text: str) -> str:
+    """
+    Attempt to repair malformed JSON that uses Python dict syntax.
+
+    GPT-4o sometimes returns Python dict format instead of valid JSON.
+    This function converts common patterns to valid JSON before parsing.
+
+    Repairs performed:
+    - Single quotes → double quotes (for keys and string values)
+    - Python booleans (True/False) → JSON booleans (true/false)
+    - Python None → JSON null
+
+    Args:
+        text: Potentially malformed JSON string
+
+    Returns:
+        Repaired JSON string (or original if it looks valid)
+
+    Example:
+        >>> _repair_json("{'is_correct': True, 'value': None}")
+        '{"is_correct": true, "value": null}'
+    """
+    # Skip if it looks like valid JSON already
+    if text.strip().startswith('{') and '"' in text:
+        return text
+
+    # Replace single quotes with double quotes, but be careful about apostrophes
+    # Strategy: replace 'key': patterns and ': 'value' patterns
+    import re
+
+    # Replace keys: 'key': -> "key":
+    text = re.sub(r"'(\w+)'(\s*:)", r'"\1"\2', text)
+
+    # Replace string values: : 'value' -> : "value" (handles values with spaces)
+    text = re.sub(r":\s*'([^']*)'", r': "\1"', text)
+
+    # Replace true/false/null Python -> JSON
+    text = re.sub(r'\bTrue\b', 'true', text)
+    text = re.sub(r'\bFalse\b', 'false', text)
+    text = re.sub(r'\bNone\b', 'null', text)
+
+    return text
+
+
 # Default models per provider
 DEFAULT_MODELS = {
     "openai": "gpt-4o",
@@ -187,10 +232,15 @@ Are these answers equivalent? Respond ONLY with valid JSON (no other text):
 
             # Parse JSON from response (handle potential markdown code blocks)
             json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-            if json_match:
-                result = json.loads(json_match.group())
-            else:
-                result = json.loads(response_text)
+            json_text = json_match.group() if json_match else response_text
+
+            # Try parsing directly first, then with repair
+            try:
+                result = json.loads(json_text)
+            except json.JSONDecodeError:
+                # Attempt to repair malformed JSON (single quotes, Python bools, etc.)
+                repaired_text = _repair_json(json_text)
+                result = json.loads(repaired_text)
 
             verification_result = {
                 "is_correct": result.get("equivalent", False),

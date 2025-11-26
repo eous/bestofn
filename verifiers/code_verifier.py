@@ -180,6 +180,19 @@ class CodeVerifier(Verifier):
             'self.' in text,
             'elif ' in text,
             '__init__' in text,
+            # Additional Python patterns for better detection
+            'return ' in text,
+            ' in ' in text and 'for ' in text,  # for loops
+            'if ' in text and ':' in text,  # if statements
+            'range(' in text,
+            'len(' in text,
+            bool(re.search(r'\[.+\s+for\s+.+\s+in\s+', text)),  # list comprehension
+            bool(re.search(r'f["\']', text)),  # f-strings
+            'True' in text or 'False' in text,  # Python booleans
+            'None' in text,
+            'lambda ' in text,
+            '.append(' in text,
+            '.items()' in text or '.keys()' in text or '.values()' in text,
         ])
 
         js_indicators = sum([
@@ -190,6 +203,17 @@ class CodeVerifier(Verifier):
             'console.log(' in text,
             '=>' in text,  # Arrow functions
             '===' in text,
+            # Additional JavaScript patterns
+            'return ' in text and '{' in text,  # JS typically uses braces
+            'null' in text.lower() and 'None' not in text,  # null vs None
+            '.forEach(' in text,
+            '.map(' in text,
+            '.filter(' in text,
+            '.reduce(' in text,
+            'async ' in text or 'await ' in text,
+            '!== ' in text,
+            'typeof ' in text,
+            '.push(' in text,
         ])
 
         sql_indicators = sum([

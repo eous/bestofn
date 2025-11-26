@@ -74,12 +74,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("BestOfN")
 
-# Global debug log file path (set via CLI args)
-DEBUG_LOG_FILE: Optional[str] = None
-# Note: DEBUG_LOG_LOCK is initialized lazily in async context to avoid race conditions
-DEBUG_LOG_LOCK: Optional[asyncio.Lock] = None
-
-
 # -----------------------------------------------------------------------------
 # Verification Logic (Enhanced - Using Secure Verifier Module)
 # -----------------------------------------------------------------------------
@@ -111,10 +105,19 @@ from common.generation_utils import (
     parse_score_tag,
     extract_plan_steps,
     get_verifier,
-    # log_request_response kept local (uses module-level DEBUG_LOG_FILE)
+    init_debug_logging,
+    log_request_response,
     format_question,
     PROMPT_TEMPLATE,
 )
+from common.api_retry import call_with_retry
+from common.response_validation import (
+    MAX_ANSWER_LENGTH,
+    MAX_ANALYSIS_LENGTH,
+    truncate_if_needed,
+    is_empty_response,
+)
+from common.refusal_check import build_refusal_detection
 
 # Import verifiers
 from verifiers import (
@@ -155,6 +158,10 @@ except ImportError as e:
 # -----------------------------------------------------------------------------
 # Helper Functions (Note: Most moved to common/generation_utils.py)
 # -----------------------------------------------------------------------------
+
+# Note: API retry logic moved to common/api_retry.py (call_with_retry)
+# Note: Response validation moved to common/response_validation.py
+
 
 # Legacy VerificationResult for backward compatibility
 @dataclass
@@ -292,67 +299,7 @@ def parse_harmony_response(text: str) -> Dict[str, List[str]]:
 
 
 # Note: extract_xml, parse_score_tag, extract_plan_steps imported from common.generation_utils
-
-async def log_request_response(
-    query_id: str,
-    question: str,
-    request_body: Dict[str, Any],
-    responses: List[str],
-    error: Optional[str] = None,
-) -> None:
-    """
-    Log raw request and response to debug file.
-
-    Args:
-        query_id: Unique query identifier
-        question: The original question text
-        request_body: Dict with model, messages, n, temperature, max_tokens
-        responses: List of response texts (one per candidate)
-        error: Optional error message if generation failed
-    """
-    if not DEBUG_LOG_FILE:
-        return
-
-    global DEBUG_LOG_LOCK
-    # Lazy initialization of async lock - must be done in async context
-    if DEBUG_LOG_LOCK is None:
-        DEBUG_LOG_LOCK = asyncio.Lock()
-        logger.debug("Initialized DEBUG_LOG_LOCK in async context")
-
-    async with DEBUG_LOG_LOCK:
-        try:
-            import json
-            with open(DEBUG_LOG_FILE, 'a', encoding='utf-8') as f:
-                f.write("=" * 80 + "\n")
-                f.write(f"QUERY ID: {query_id}\n")
-                f.write(f"TIMESTAMP: {datetime.now().isoformat()}\n")
-                f.write("=" * 80 + "\n\n")
-
-                f.write("QUESTION:\n")
-                f.write("-" * 80 + "\n")
-                f.write(f"{question}\n\n")
-
-                f.write("REQUEST BODY:\n")
-                f.write("-" * 80 + "\n")
-                f.write(json.dumps(request_body, indent=2, ensure_ascii=False))
-                f.write("\n\n")
-
-                if error:
-                    f.write("ERROR:\n")
-                    f.write("-" * 80 + "\n")
-                    f.write(f"{error}\n\n")
-                else:
-                    f.write(f"RESPONSES ({len(responses)} candidates):\n")
-                    f.write("-" * 80 + "\n")
-                    for i, response in enumerate(responses):
-                        f.write(f"\n--- Candidate {i} ---\n")
-                        f.write(response)
-                        f.write("\n")
-                    f.write("\n")
-
-                f.write("\n\n")
-        except Exception as e:
-            logger.warning(f"Failed to write debug log: {e}")
+# Note: log_request_response imported from common.generation_utils (uses init_debug_logging)
 
 
 async def generate_candidates(
@@ -396,39 +343,40 @@ async def generate_candidates(
 
         if tools:
             logger.info(f"Found {len(tools)} tool definitions - using tool executor")
-            async with sem:
-                try:
-                    # Use tool executor for tool-calling queries
-                    results = await generate_candidates_with_tool_calling(
-                        client=client,
-                        model=model,
-                        question=question,
-                        metadata=row_metadata,
-                        n=n,
-                        persona=persona,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        max_iterations=3,
-                    )
+            try:
+                # Use tool executor for tool-calling queries
+                # Pass sem for rate limiting (consistent with claude_gen pattern)
+                results = await generate_candidates_with_tool_calling(
+                    client=client,
+                    model=model,
+                    question=question,
+                    metadata=row_metadata,
+                    n=n,
+                    persona=persona,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    max_iterations=3,
+                    sem=sem,
+                )
 
-                    # Log for debugging
-                    if DEBUG_LOG_FILE and query_id:
-                        raw_responses = [r.get('raw_text', r.get('final_answer', '')) for r in results]
-                        request_body = {
-                            "model": model,
-                            "instructions": persona,
-                            "input": question,
-                            "tools": [t.get('function', {}).get('name') for t in tools],
-                            "reasoning": {"effort": "medium"},
-                            "max_output_tokens": max_tokens,
-                        }
-                        await log_request_response(query_id, question, request_body, raw_responses)
+                # Log for debugging (log_request_response handles debug_log check internally)
+                if query_id:
+                    raw_responses = [r.get('raw_text', r.get('final_answer', '')) for r in results]
+                    request_body = {
+                        "model": model,
+                        "instructions": persona,
+                        "input": question,
+                        "tools": [t.get('function', {}).get('name') for t in tools],
+                        "reasoning": {"effort": "medium"},
+                        "max_output_tokens": max_tokens,
+                    }
+                    await log_request_response(query_id, question, request_body, raw_responses)
 
-                    return results
+                return results
 
-                except Exception as e:
-                    logger.error(f"Tool executor failed: {e}, falling back to standard generation")
-                    # Fall through to standard generation
+            except Exception as e:
+                logger.error(f"Tool executor failed: {e}, falling back to standard generation")
+                # Fall through to standard generation
         else:
             logger.warning(f"No tools found in metadata for tool_calling split - using standard generation")
 
@@ -454,13 +402,16 @@ async def generate_candidates(
 
                 if use_structured_output:
                     # Use .parse() method with text_format for structured outputs
-                    response = await client.responses.parse(
-                        model=model,
-                        instructions=persona if persona else None,
-                        input=user_content,
-                        reasoning={"effort": "medium"},
-                        max_output_tokens=max_tokens,
-                        text_format=ModelOutput,
+                    # Wrapped in retry helper for resilience
+                    response = await call_with_retry(
+                        lambda: client.responses.parse(
+                            model=model,
+                            instructions=persona if persona else None,
+                            input=user_content,
+                            reasoning={"effort": "medium"},
+                            max_output_tokens=max_tokens,
+                            text_format=ModelOutput,
+                        )
                     )
 
                     # Extract structured output
@@ -487,12 +438,15 @@ async def generate_candidates(
                         })
                 else:
                     # Fallback to raw text output
-                    response = await client.responses.create(
-                        model=model,
-                        instructions=persona if persona else None,
-                        input=user_content,
-                        reasoning={"effort": "medium"},
-                        max_output_tokens=max_tokens,
+                    # Wrapped in retry helper for resilience
+                    response = await call_with_retry(
+                        lambda: client.responses.create(
+                            model=model,
+                            instructions=persona if persona else None,
+                            input=user_content,
+                            reasoning={"effort": "medium"},
+                            max_output_tokens=max_tokens,
+                        )
                     )
 
                     results.append({
@@ -501,8 +455,8 @@ async def generate_candidates(
                         'raw_text': response.output_text,
                     })
 
-            # Log request/response if debug logging enabled
-            if DEBUG_LOG_FILE and query_id:
+            # Log request/response (log_request_response handles debug_log check internally)
+            if query_id:
                 # Extract raw_text for logging
                 raw_responses = [r.get('raw_text', r.get('final_answer', '')) for r in results]
                 await log_request_response(query_id, question, request_body, raw_responses)
@@ -514,8 +468,8 @@ async def generate_candidates(
             logger.error(error_msg)
             logger.error(traceback.format_exc())
 
-            # Log error if debug logging enabled
-            if DEBUG_LOG_FILE and query_id:
+            # Log error (log_request_response handles debug_log check internally)
+            if query_id:
                 await log_request_response(query_id, question, request_body, [], error=error_msg)
 
             return []
@@ -796,6 +750,11 @@ async def process_item(
                         content=raw_text,
                     ))
 
+        # Truncate overly long responses to prevent memory/storage issues
+        final_answer = truncate_if_needed(final_answer, MAX_ANSWER_LENGTH, "final_answer")
+        analysis = truncate_if_needed(analysis, MAX_ANALYSIS_LENGTH, "analysis")
+        raw_text = truncate_if_needed(raw_text, MAX_ANALYSIS_LENGTH, "raw_text")
+
         # Extract fields for quality metrics
         if has_structured:
             # Structured output: analysis field is the full reasoning, no XML tags
@@ -837,9 +796,7 @@ async def process_item(
 
         # Detect empty/truncated responses (truly empty, not just short)
         # Short answers like "4" or "Yes" are valid - only flag if answer is completely empty
-        is_empty = answer_length == 0
-        if is_empty:
-            logger.warning(f"Empty response detected: answer_length={answer_length}, reasoning_length={reasoning_length}")
+        is_empty = is_empty_response(answer, reasoning)
 
         quality_metrics = QualityMetrics(
             answer_length=answer_length,
@@ -950,23 +907,9 @@ async def process_item(
             llm_judge_failed=llm_judge_failed,
         )
 
-        # 8. Classify refusal
-        refusal_classification = RefusalDetection()
-        if refusal_classifier:
-            refusal_result = refusal_classifier.classify(answer)
-            # Also check full output (raw_text or analysis)
-            if not refusal_result["is_refusal"]:
-                full_text = raw_text if raw_text else (analysis + "\n" + final_answer)
-                raw_refusal = refusal_classifier.classify(full_text)
-                if raw_refusal["is_refusal"] and raw_refusal["confidence"] > refusal_result["confidence"]:
-                    refusal_result = raw_refusal
-
-            refusal_classification = RefusalDetection(
-                is_refusal=refusal_result["is_refusal"],
-                confidence=refusal_result["confidence"],
-                refusal_type=refusal_result.get("refusal_type"),
-                matched_patterns=refusal_result.get("matched_patterns", []),
-            )
+        # 8. Classify refusal (uses common/refusal_check.py)
+        full_text = raw_text if raw_text else (analysis + "\n" + final_answer if analysis else final_answer)
+        refusal_classification = build_refusal_detection(answer, full_text, refusal_classifier)
 
         # 9. Build Pydantic record (validates schema)
         try:
@@ -1025,24 +968,29 @@ async def async_main(args: argparse.Namespace) -> None:
     if not args.api_key:
         raise SystemExit("OPENAI_API_KEY not set. Use --api-key or export OPENAI_API_KEY.")
 
-    # Set up debug logging if requested
-    global DEBUG_LOG_FILE, DEBUG_LOG_LOCK
+    # Set up debug logging if requested (uses common.generation_utils)
     if args.debug_log:
-        DEBUG_LOG_FILE = args.debug_log
-        DEBUG_LOG_LOCK = asyncio.Lock()
-        # Clear/create the debug log file
-        with open(DEBUG_LOG_FILE, 'w', encoding='utf-8') as f:
-            f.write(f"DEBUG LOG - Generated at {datetime.now().isoformat()}\n")
-            f.write(f"Model: {args.model}\n")
-            f.write(f"Temperature: {args.temperature}\n")
-            f.write(f"Max tokens: {args.max_tokens}\n")
-            f.write(f"Num candidates: {args.num_candidates}\n")
-            f.write("=" * 80 + "\n\n")
-        logger.info(f"Debug logging enabled: {DEBUG_LOG_FILE}")
+        init_debug_logging(args.debug_log, {
+            "Model": args.model,
+            "Temperature": args.temperature,
+            "Max tokens": args.max_tokens,
+            "Num candidates": args.num_candidates,
+        })
 
     client = AsyncOpenAI(api_key=args.api_key, base_url=args.base_url)
     sem = asyncio.Semaphore(args.concurrency)
 
+    try:
+        # Main processing wrapped in try/finally for client cleanup
+        await _async_main_inner(client, sem, args)
+    finally:
+        # Ensure client is properly closed to release connections
+        await client.close()
+        logger.debug("AsyncOpenAI client closed")
+
+
+async def _async_main_inner(client: AsyncOpenAI, sem: asyncio.Semaphore, args: argparse.Namespace) -> None:
+    """Inner async main logic, separated for proper client cleanup."""
     # Load checkpoint if resuming
     completed_query_ids: set = set()
     existing_results: List[Dict[str, Any]] = []
@@ -1139,27 +1087,43 @@ async def async_main(args: argparse.Namespace) -> None:
         # Add checkpointing every N queries to prevent data loss
         checkpoint_interval = args.checkpoint_every
         completed = 0
+        failed_count = 0
 
-        for fut in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=f"Split {split}"):
-            try:
-                res = await fut
-                if res:
-                    all_results.extend(res)
-                    completed += 1
+        try:
+            for fut in tqdm(asyncio.as_completed(tasks), total=len(tasks), desc=f"Split {split}"):
+                try:
+                    res = await fut
+                    if res:
+                        all_results.extend(res)
+                        completed += 1
 
-                    # Checkpoint periodically (if enabled)
-                    if checkpoint_interval > 0 and completed % checkpoint_interval == 0 and all_results:
-                        checkpoint_file = args.output.replace('.parquet', f'_checkpoint_{completed}.parquet')
-                        logger.info(f"Saving checkpoint at {completed} queries to {checkpoint_file}")
-                        try:
-                            ds_checkpoint = Dataset.from_list(all_results)
-                            ds_checkpoint.to_parquet(checkpoint_file)
-                            logger.info(f"Checkpoint saved: {len(all_results)} records")
-                        except Exception as e:
-                            logger.warning(f"Checkpoint save failed: {e}")
-            except Exception as e:
-                logger.warning("Task in split '%s' failed: %s", split, e)
-                logger.debug(traceback.format_exc())
+                        # Checkpoint periodically (if enabled)
+                        if checkpoint_interval > 0 and completed % checkpoint_interval == 0 and all_results:
+                            checkpoint_file = args.output.replace('.parquet', f'_checkpoint_{completed}.parquet')
+                            logger.info(f"Saving checkpoint at {completed} queries to {checkpoint_file}")
+                            try:
+                                ds_checkpoint = Dataset.from_list(all_results)
+                                ds_checkpoint.to_parquet(checkpoint_file)
+                                logger.info(f"Checkpoint saved: {len(all_results)} records")
+                            except Exception as e:
+                                logger.warning(f"Checkpoint save failed: {e}")
+                except Exception as e:
+                    failed_count += 1
+                    logger.warning("Task in split '%s' failed: %s", split, e)
+                    logger.debug(traceback.format_exc())
+
+                    # If >20% of tasks fail, abort early to prevent resource waste
+                    if failed_count > len(tasks) * 0.2:
+                        logger.error(f"Too many failures ({failed_count}/{len(tasks)}), aborting split '{split}'")
+                        break
+        finally:
+            # Cancel any remaining tasks to prevent orphaned coroutines
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            # Wait briefly for cancellations to complete
+            if any(not t.done() for t in tasks):
+                await asyncio.gather(*[t for t in tasks if not t.done()], return_exceptions=True)
 
     if not all_results:
         logger.warning("No candidates generated; no Parquet file will be written.")

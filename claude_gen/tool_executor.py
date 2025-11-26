@@ -12,6 +12,7 @@ Handles the complete tool-calling lifecycle for Claude:
 Uses deterministic mock implementations for reproducibility.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -260,9 +261,29 @@ class ClaudeToolExecutor:
                     # Track tool usage
                     metadata['tool_calls_by_name'][tool_name] = metadata['tool_calls_by_name'].get(tool_name, 0) + 1
 
-                    # Execute tool in sandbox
+                    # Execute tool in sandbox (wrapped in executor to avoid blocking event loop
+                    # when sandbox makes sync LLM calls for unknown tools)
                     logger.debug(f"Executing {tool_name}({json.dumps(tool_input)[:100]}...)")
-                    result = self.sandbox.execute_tool_call(tool_name, tool_input)
+                    try:
+                        loop = asyncio.get_running_loop()
+                        result = await loop.run_in_executor(
+                            None,  # Use default thread pool
+                            self.sandbox.execute_tool_call,
+                            tool_name,
+                            tool_input
+                        )
+                    except Exception as executor_error:
+                        # Handle thread pool or sandbox execution errors
+                        error_msg = f"Executor error for {tool_name}: {str(executor_error)[:200]}"
+                        logger.error(error_msg)
+                        metadata['errors'].append(error_msg)
+                        tool_results.append({
+                            'type': 'tool_result',
+                            'tool_use_id': tool_id,
+                            'content': json.dumps({'error': error_msg}),
+                            'is_error': True,
+                        })
+                        continue
 
                     if result.get('success'):
                         result_content = json.dumps(result['result'])
@@ -378,6 +399,7 @@ async def generate_candidates_with_tool_calling(
     temperature: float = 1.0,
     max_tokens: int = 70000,
     max_iterations: int = 3,
+    sem: Optional[asyncio.Semaphore] = None,  # Accept semaphore for rate limiting compatibility
 ) -> List[Dict[str, Any]]:
     """
     Convenience wrapper for tool-calling generation with Claude.
@@ -412,12 +434,25 @@ async def generate_candidates_with_tool_calling(
         max_iterations=max_iterations,
     )
 
-    return await executor.generate_candidates_with_tools(
-        model=model,
-        question=question,
-        tools=tools,
-        n=n,
-        persona=persona,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    # Use semaphore for rate limiting if provided (consistent with openai_gen pattern)
+    if sem:
+        async with sem:
+            return await executor.generate_candidates_with_tools(
+                model=model,
+                question=question,
+                tools=tools,
+                n=n,
+                persona=persona,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+    else:
+        return await executor.generate_candidates_with_tools(
+            model=model,
+            question=question,
+            tools=tools,
+            n=n,
+            persona=persona,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )

@@ -40,6 +40,7 @@ experiments/results/*.csv
 .env
 *_key.txt
 *_api_key.txt
+.env.e2e
 
 # Docker
 .dockerignore
@@ -48,6 +49,10 @@ experiments/results/*.csv
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Cache files
+.llm_tool_cache.json
+*.cache.json
 
 # Test data files
 test_*.parquet

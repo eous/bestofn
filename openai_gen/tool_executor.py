@@ -12,6 +12,7 @@ Handles the complete tool-calling lifecycle:
 Uses deterministic mock implementations for reproducibility.
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -306,9 +307,31 @@ class ToolExecutor:
                         conversation_history.append(tool_result_msg)
                         continue
 
-                    # Execute tool in sandbox
+                    # Execute tool in sandbox (wrapped in executor to avoid blocking event loop
+                    # when sandbox makes sync LLM calls for unknown tools)
                     logger.debug(f"Executing {func_name}({json.dumps(func_args)[:100]}...)")
-                    result = self.sandbox.execute_tool_call(func_name, func_args)
+                    try:
+                        loop = asyncio.get_running_loop()
+                        result = await loop.run_in_executor(
+                            None,  # Use default thread pool
+                            self.sandbox.execute_tool_call,
+                            func_name,
+                            func_args
+                        )
+                    except Exception as executor_error:
+                        # Handle thread pool or sandbox execution errors
+                        error_msg = f"Executor error for {func_name}: {str(executor_error)[:200]}"
+                        logger.error(error_msg)
+                        metadata['errors'].append(error_msg)
+                        tool_result_msg = {
+                            'role': 'tool',
+                            'tool_call_id': tool_call['id'],
+                            'name': func_name,
+                            'content': json.dumps({'error': error_msg}),
+                        }
+                        tool_results.append(tool_result_msg)
+                        conversation_history.append(tool_result_msg)
+                        continue
 
                     if result.get('success'):
                         result_content = json.dumps(result['result'])
@@ -451,6 +474,7 @@ async def generate_candidates_with_tool_calling(
     temperature: float = 1.0,
     max_tokens: int = 70000,
     max_iterations: int = 3,
+    sem: Optional[asyncio.Semaphore] = None,
 ) -> List[Dict[str, Any]]:
     """
     Convenience wrapper for tool-calling generation.
@@ -468,6 +492,7 @@ async def generate_candidates_with_tool_calling(
         temperature: Sampling temperature
         max_tokens: Max output tokens
         max_iterations: Max tool-calling iterations
+        sem: Optional semaphore for rate limiting (for API consistency with claude_gen)
 
     Returns:
         List of candidate dicts
@@ -486,12 +511,25 @@ async def generate_candidates_with_tool_calling(
         max_iterations=max_iterations,
     )
 
-    return await executor.generate_candidates_with_tools(
-        model=model,
-        question=question,
-        tools=tools,
-        n=n,
-        persona=persona,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
+    # Use semaphore for rate limiting if provided (consistent with claude_gen pattern)
+    if sem:
+        async with sem:
+            return await executor.generate_candidates_with_tools(
+                model=model,
+                question=question,
+                tools=tools,
+                n=n,
+                persona=persona,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+    else:
+        return await executor.generate_candidates_with_tools(
+            model=model,
+            question=question,
+            tools=tools,
+            n=n,
+            persona=persona,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
