@@ -41,12 +41,15 @@ Best-of-N generation creates multiple candidate responses per query and verifies
 - **Checkpointing** - Automatic saves every N queries
 
 ### 🆕 Recent Updates
+- **Claude Opus 4.5 Support** - Full support for `claude-opus-4-5-20251101` in experiment configs
+- **Hybrid Refusal Detection** - Two-pass detection: fast pattern matching + LLM fallback for ambiguous cases
+- **LaTeX JSON Repair** - LLM judge now handles LaTeX math in reasoning (escapes `\frac`, `\sqrt`, etc.)
+- **Tool Iteration Limit** - Increased from 3 to 100 to support complex multi-step tool calling
 - **LLM Judge Fallback** - Automatic fallback to LLM-as-judge when primary verification has low confidence (< 0.5) or for code/tool_calling splits
 - **API Retry with Backoff** - Exponential backoff with jitter for rate limits and server errors
 - **Response Validation** - Automatic truncation of oversized responses (500K answer, 2M analysis limits)
 - **Quality Metrics** - Comprehensive response quality assessment with completeness scoring
 - **JSON Repair** - Handles GPT-4o's occasional Python dict format output (single quotes, True/False/None)
-- **Updated Timeouts** - Math: 5s, Code: 10s, Tool: 5s (increased for complex operations)
 
 ## Quick Start
 
@@ -70,13 +73,13 @@ export ANTHROPIC_API_KEY=your-key-here  # Optional, for Claude
 
 ```bash
 # Generate with OpenAI
-python bestofn.py openai generate --config experiments/marvin_100x8.yaml
+python bestofn.py openai generate --config experiments/marvin/openai_100x8.yaml
 
 # Generate with Claude
-python bestofn.py claude generate --config experiments/marvin_claude_100x8.yaml
+python bestofn.py claude generate --config experiments/marvin/claude_100x8.yaml
 
 # Inspect results
-python inspect_experiment.py experiments/results/marvin_100x8.parquet
+python inspect_experiment.py experiments/marvin/results/openai_100x8.parquet
 ```
 
 ### Regenerate Failed Rows
@@ -175,13 +178,13 @@ Generate training data with distinctive personalities:
 
 ```bash
 # Marvin - depressed robot
-python bestofn.py openai generate --config experiments/marvin_100x8.yaml
+python bestofn.py openai generate --config experiments/marvin/openai_100x8.yaml
 
 # Data - precise android
-python bestofn.py openai generate --config experiments/data_100x8.yaml
+python bestofn.py openai generate --config experiments/data/openai_100x8.yaml
 
 # Johnny 5 - enthusiastic robot
-python bestofn.py openai generate --config experiments/j5_100x8.yaml
+python bestofn.py openai generate --config experiments/j5/openai_100x8.yaml
 ```
 
 Flexible persona variants (`*_flexible.txt`) produce higher diversity responses while maintaining character voice.
@@ -208,7 +211,7 @@ python local_server.py --model /path/to/model --port 8000
 # Terminal 2: Generate
 export OPENAI_BASE_URL=http://localhost:8000/v1
 export OPENAI_API_KEY=dummy
-python bestofn.py openai generate --config experiments/baseline.yaml
+python bestofn.py openai generate --config experiments/baseline/baseline.yaml
 ```
 
 Features:
@@ -222,7 +225,7 @@ Features:
 import pandas as pd
 
 # Load results
-df = pd.read_parquet('experiments/results/marvin_100x8.parquet')
+df = pd.read_parquet('experiments/marvin/results/openai_100x8.parquet')
 
 # Verification rate by split
 print(df.groupby('split')['is_verified'].mean())

@@ -1,0 +1,43 @@
+# Data Personality Transfer - Claude Opus 4.5
+# 200 queries x 8 candidates = 1600 samples
+
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
+splits: math,code,tool_calling
+streaming: true
+max_queries: 500
+
+model: claude-opus-4-5-20251101
+num_candidates: 2
+temperature: 1.0
+max_tokens: 16384
+
+persona: personas/data_flexible.txt
+
+concurrency: 10
+
+output: experiments/data/results/claude_100x8.parquet
+structured_output: true
+llm_judge_fallback: true
+
+generator: claude
+
+notes: |
+  DATA PERSONALITY TRANSFER - CLAUDE VERSION
+
+  Goal: Test NEUTRAL affect personality transfer with Claude
+
+  Persona: Data (Star Trek TNG)
+  - Android striving to understand humanity
+  - Logical, analytical, curious
+  - Struggles with emotions/humor
+  - Precise language, avoids contractions
+
+  Signature markers:
+  - "Fascinating" / "Intriguing"
+  - Formal phrasing (no contractions)
+  - References to "emotion chip"
+  - Clarifying questions about idioms
+  - "I do not understand why..."
+
+  Run with:
+  python claude_gen/generate.py --config experiments/data/claude_100x8.yaml

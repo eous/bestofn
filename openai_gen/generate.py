@@ -116,7 +116,7 @@ from common.response_validation import (
     truncate_if_needed,
     is_empty_response,
 )
-from common.refusal_check import build_refusal_detection
+from common.refusal_check import build_refusal_detection, build_refusal_detection_hybrid
 
 # Import verifiers
 from verifiers import (
@@ -336,7 +336,7 @@ async def generate_candidates(
                     persona=persona,
                     temperature=temperature,
                     max_tokens=max_tokens,
-                    max_iterations=3,
+                    max_iterations=100,
                     sem=sem,
                 )
 
@@ -794,6 +794,8 @@ async def process_item(
 
         # 7. Run verification
         candidate_for_verify = {"text": answer}
+        logger.info(f"[VERIFY] Starting verification for candidate {i} (split={split})")
+        logger.info(f"[VERIFY] Using local verifier: {verifier.name}")
         v_result_raw = verifier.verify(question, candidate_for_verify, spec)
 
         # Convert to enhanced format
@@ -808,12 +810,16 @@ async def process_item(
             explanation = v_result_raw.info
             verifier_name = verifier.name
 
+        local_result = "PASS" if is_verified else "FAIL"
+        logger.info(f"[VERIFY] Local verifier result: {local_result} (confidence={confidence:.2f}, verifier={verifier_name})")
+
         # Override for empty responses - always mark as failed
         if is_empty:
             is_verified = False
             confidence = 0.0
             explanation = f"Empty/truncated response (answer_length={answer_length})"
             verifier_name = "empty_check"
+            logger.info(f"[VERIFY] Empty response detected - forced FAIL")
 
         # LLM-as-judge fallback for low-confidence verifications
         use_llm_judge = getattr(args, 'llm_judge_fallback', False)
@@ -821,6 +827,7 @@ async def process_item(
 
         # AST syntax check for code (fast, free first pass)
         if split == 'code' and not is_verified:
+            logger.info(f"[VERIFY] Running AST syntax check for code split")
             try:
                 # Extract code from answer
                 code = extract_code_from_text(answer, language='python')
@@ -832,17 +839,19 @@ async def process_item(
                         confidence = syntax_result["confidence"]
                         explanation = f"AST: {syntax_result['explanation']}"
                         verifier_name = "ast_syntax"
-                        logger.debug(f"AST syntax check failed: {explanation}")
+                        logger.info(f"[VERIFY] AST syntax check: FAIL - {explanation}")
                     elif syntax_result.get("is_valid") is True:
                         # Syntax valid - upgrade confidence slightly
                         confidence = max(confidence, syntax_result["confidence"])
-                        logger.debug("AST syntax check passed")
+                        logger.info(f"[VERIFY] AST syntax check: PASS (confidence={confidence:.2f})")
             except Exception as e:
                 logger.debug(f"AST check failed: {e}")
 
         # Track LLM judge usage
         llm_judge_used = False
         llm_judge_failed = False
+
+        logger.info(f"[VERIFY] LLM judge fallback enabled: {use_llm_judge}, ground_truth available: {bool(ground_truth)}")
 
         # LLM-as-judge fallback for failed verifications OR code/tool splits
         # Skip for empty responses - no point judging an empty answer
@@ -856,7 +865,8 @@ async def process_item(
             )
 
             if should_use_llm:
-                logger.debug(f"Using LLM judge for {split} (primary confidence={confidence})...")
+                reason = "low confidence" if (not is_verified and confidence < 0.5) else f"split={split} requires semantic check"
+                logger.info(f"[VERIFY] Triggering LLM judge fallback: {reason}")
                 llm_judge_used = True
                 try:
                     llm_judge = get_llm_judge(provider="openai", api_key=args.api_key)
@@ -873,11 +883,22 @@ async def process_item(
                         confidence = llm_result["confidence"]
                         explanation = llm_result["explanation"]
                         verifier_name = llm_result["verifier_name"]
-                        logger.debug(f"LLM judge result: {is_verified} (confidence={confidence})")
+                        llm_result_str = "PASS" if is_verified else "FAIL"
+                        logger.info(f"[VERIFY] LLM judge result: {llm_result_str} (confidence={confidence:.2f})")
+                    else:
+                        logger.info(f"[VERIFY] LLM judge low confidence ({llm_result['confidence']:.2f}), keeping local result")
 
                 except Exception as e:
                     llm_judge_failed = True
-                    logger.warning(f"LLM judge fallback failed: {e}")
+                    logger.warning(f"[VERIFY] LLM judge failed: {e}")
+            else:
+                logger.info(f"[VERIFY] LLM judge not needed (local verification: {'PASS' if is_verified else 'FAIL'}, confidence={confidence:.2f})")
+        elif not use_llm_judge:
+            logger.info(f"[VERIFY] LLM judge fallback disabled")
+
+        # Log final verification result
+        final_result = "PASS" if is_verified else "FAIL"
+        logger.info(f"[VERIFY] Final result: {final_result} (verifier={verifier_name}, confidence={confidence:.2f}, llm_judge_used={llm_judge_used})")
 
         verification_results = VerificationResults(
             is_verified=is_verified,
@@ -888,9 +909,24 @@ async def process_item(
             llm_judge_failed=llm_judge_failed,
         )
 
-        # 8. Classify refusal (uses common/refusal_check.py)
-        full_text = raw_text if raw_text else (analysis + "\n" + final_answer if analysis else final_answer)
-        refusal_classification = build_refusal_detection(answer, full_text, refusal_classifier)
+        # 8. Classify refusal using hybrid pattern + LLM approach (accurate, catches soft refusals)
+        # Skip if verification passed - a correct answer cannot be a refusal
+        if is_verified:
+            from common.schema import RefusalDetection
+            refusal_classification = RefusalDetection(
+                is_refusal=False,
+                confidence=1.0,  # High confidence: verified correct = not a refusal
+                refusal_type=None,
+                matched_patterns=[],
+            )
+        else:
+            full_text = raw_text if raw_text else (analysis + "\n" + final_answer if analysis else final_answer)
+            refusal_classification = await build_refusal_detection_hybrid(
+                question=question,
+                answer=answer,
+                full_text=full_text,
+                provider="claude",  # Use Claude for refusal judge (more accurate)
+            )
 
         # 9. Build Pydantic record (validates schema)
         try:

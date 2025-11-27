@@ -13,7 +13,7 @@ Key features:
 
 Usage:
     python generate_best_of_n_claude.py \
-        --config experiments/marvin_claude_100x8.yaml
+        --config experiments/marvin/claude_100x8.yaml
 """
 
 import os
@@ -74,7 +74,7 @@ from common.response_validation import (
     truncate_if_needed,
     is_empty_response,
 )
-from common.refusal_check import build_refusal_detection
+from common.refusal_check import build_refusal_detection, build_refusal_detection_hybrid
 from common.llm_judge import get_llm_judge
 
 # Import Claude-specific tool executor
@@ -111,8 +111,8 @@ INPUT_MESSAGES_CACHE = None
 # Prompt Template (Structured Output)
 # -----------------------------------------------------------------------------
 
-# Structured output prompt (used with tool use approach for all non-tool_calling tasks)
-STRUCTURED_OUTPUT_PROMPT = """Solve this problem:
+# Structured output prompt - DEFAULT (math and other)
+STRUCTURED_OUTPUT_PROMPT_DEFAULT = """Solve this problem:
 
 {question}
 
@@ -124,9 +124,54 @@ INSTRUCTIONS:
 3. After all steps, provide your final answer
 4. Maintain your character/persona throughout
 
-IMPORTANT: For math problems, your final answer MUST use \\boxed{{result}} format.
+IMPORTANT REQUIREMENTS:
+- For math problems, your final answer MUST use \\boxed{{result}} format.
+- You MUST always provide a complete final_answer - never leave it empty.
 
 You MUST use the respond_with_steps tool to structure your response."""
+
+# Structured output prompt - COMPETITIVE CODE MODE (for code split)
+STRUCTURED_OUTPUT_PROMPT_CODE = """COMPETITIVE PROGRAMMING PROBLEM - OPTIMIZE FOR SPEED
+
+{question}
+
+=== COMPETITIVE PROGRAMMING MODE ===
+You are solving a competitive programming problem with STRICT time limits.
+- Input size: Assume N up to 10^5 or larger, requiring O(N log N) or better algorithms
+- NAIVE O(N²) SOLUTIONS WILL TIME OUT - DO NOT USE THEM
+- Use efficient data structures: prefix sums, segment trees, binary search, hash maps
+- The online judge expects OPTIMAL solutions, not readable ones
+- Prioritize EFFICIENCY over code clarity
+
+REQUIRED APPROACH:
+1. First, analyze the time complexity requirements from constraints
+2. Choose the most efficient algorithm that passes time limits
+3. Use appropriate data structures (prefix sums for range queries, etc.)
+4. Your code MUST handle edge cases within time limits
+
+BAD (will timeout):
+- Nested loops giving O(N²)
+- Recalculating values that could be precomputed
+- Not using prefix sums for range sum queries
+
+GOOD:
+- Prefix sums for O(1) range queries
+- Binary search for O(log N) lookups
+- Hash maps for O(1) existence checks
+- Sorting + two pointers for O(N log N)
+
+You MUST use the respond_with_steps tool to structure your response.
+Your final_answer MUST contain complete, efficient, working code."""
+
+# Legacy alias for compatibility
+STRUCTURED_OUTPUT_PROMPT = STRUCTURED_OUTPUT_PROMPT_DEFAULT
+
+
+def get_structured_prompt(split: str) -> str:
+    """Get the appropriate structured output prompt for the given split."""
+    if split == "code":
+        return STRUCTURED_OUTPUT_PROMPT_CODE
+    return STRUCTURED_OUTPUT_PROMPT_DEFAULT
 
 # Tool definition for structured output (matches OpenAI's ModelOutput schema)
 STRUCTURED_OUTPUT_TOOL = {
@@ -200,6 +245,7 @@ async def generate_candidates_with_structured_output(
     max_tokens: int = 16384,
     persona: Optional[str] = "",
     query_id: Optional[str] = None,
+    split: str = "math",
 ) -> List[Dict[str, Any]]:
     """
     Generate N candidates using Claude API with tool-based structured output.
@@ -217,6 +263,7 @@ async def generate_candidates_with_structured_output(
         max_tokens: Max output tokens
         persona: System prompt persona
         query_id: Query ID for logging
+        split: Dataset split (math, code, tool_calling) for prompt selection
 
     Returns:
         List of dicts with 'steps' and 'final_answer' matching OpenAI format
@@ -224,8 +271,9 @@ async def generate_candidates_with_structured_output(
     # Note: INPUT_MESSAGES_CACHE is now built proactively in _async_main_inner()
     # to prevent cache pollution between runs
 
-    # Format question with structured output prompt
-    user_content = STRUCTURED_OUTPUT_PROMPT.format(question=question)
+    # Format question with split-appropriate structured output prompt
+    prompt_template = get_structured_prompt(split)
+    user_content = prompt_template.format(question=question)
 
     # Build request body for debug logging
     request_body = {
@@ -392,7 +440,7 @@ async def process_item(
 
     # Standard generation (or fallback) - always use structured output for consistency with OpenAI
     if raw_outputs is None:
-        logger.debug(f"Using structured output generation for query {query_id}")
+        logger.debug(f"Using structured output generation for query {query_id} (split={split})")
         raw_outputs = await generate_candidates_with_structured_output(
             client=client,
             model=args.model,
@@ -403,6 +451,7 @@ async def process_item(
             max_tokens=args.max_tokens,
             persona=getattr(args, 'persona', None),
             query_id=query_id,
+            split=split,  # Pass split for prompt selection
         )
 
     if not raw_outputs:
@@ -441,10 +490,11 @@ async def process_item(
         final_answer = output_dict.get('final_answer', '')
         raw_text = output_dict.get('raw_text', '')
 
+        # Initialize output_messages at the start (must be defined in all code paths)
+        output_messages = []
+
         # Handle tool_calling results with conversation_history (match OpenAI format)
         if conversation_history:
-            # Convert Claude conversation history to output_messages (matching OpenAI exactly)
-            output_messages = []
             has_tool_calling = True
 
             # Add tools_used as first message (matching OpenAI)
@@ -536,9 +586,7 @@ async def process_item(
         # Build output_messages matching OpenAI format EXACTLY:
         # - One message per step with JSON content containing {'step': N, 'explanation': '...', 'output': '...'}
         # - One final message with channel="final"
-        # NOTE: Only build if not already populated from tool_calling path (lines 450-528)
-        if not output_messages:
-            output_messages = []
+        # NOTE: Only build if not already populated from tool_calling path
         if not output_messages and steps:
             # Each step as a separate message (matches OpenAI format)
             for idx, step in enumerate(steps):
@@ -594,6 +642,8 @@ async def process_item(
 
         # Run verification
         candidate_for_verify = {"text": final_answer}
+        logger.info(f"[VERIFY] Starting verification for candidate {i} (split={split})")
+        logger.info(f"[VERIFY] Using local verifier: {verifier.name}")
         v_result_raw = verifier.verify(question, candidate_for_verify, spec)
 
         is_verified = v_result_raw.is_correct if hasattr(v_result_raw, 'is_correct') else v_result_raw.is_verified
@@ -603,15 +653,20 @@ async def process_item(
         llm_judge_used = False
         llm_judge_failed = False
 
+        local_result = "PASS" if is_verified else "FAIL"
+        logger.info(f"[VERIFY] Local verifier result: {local_result} (confidence={confidence:.2f}, verifier={verifier_name})")
+
         # Override for empty responses - always mark as failed
         if is_empty:
             is_verified = False
             confidence = 0.0
             explanation = f"Empty/truncated response (answer_length={answer_length})"
             verifier_name = "empty_check"
+            logger.info(f"[VERIFY] Empty response detected - forced FAIL")
 
         # AST pre-validation for code splits (fast, free check before LLM judge)
         if split == 'code' and not is_empty and final_answer.strip():
+            logger.info(f"[VERIFY] Running AST syntax check for code split")
             code = extract_code_from_text(final_answer, language='python')
             if code:
                 syntax_result = check_code_syntax(code, 'python')
@@ -621,16 +676,18 @@ async def process_item(
                     confidence = syntax_result["confidence"]
                     explanation = f"AST: {syntax_result['explanation']}"
                     verifier_name = "ast_syntax"
-                    logger.debug(f"AST syntax check failed: {explanation}")
+                    logger.info(f"[VERIFY] AST syntax check: FAIL - {explanation}")
                 elif syntax_result.get("is_valid") is True:
                     # Syntax valid - upgrade confidence slightly
                     confidence = max(confidence, syntax_result["confidence"])
-                    logger.debug("AST syntax check passed")
+                    logger.info(f"[VERIFY] AST syntax check: PASS (confidence={confidence:.2f})")
 
         # LLM Judge fallback (if enabled and primary verification uncertain)
         # Skip for empty responses - no point judging an empty answer
         use_llm_judge = getattr(args, 'llm_judge_fallback', False)
         ground_truth = spec.get("ground_truth")  # Already extracted by get_verifier()
+
+        logger.info(f"[VERIFY] LLM judge fallback enabled: {use_llm_judge}, ground_truth available: {bool(ground_truth)}")
 
         if use_llm_judge and ground_truth and not is_empty:
             # Use LLM judge when primary verification has low confidence
@@ -639,7 +696,8 @@ async def process_item(
                 (split in ['code', 'tool_calling'])  # Code/tool needs semantic verification
             )
             if should_use_llm:
-                logger.debug(f"Using LLM judge for {split} (primary confidence={confidence})...")
+                reason = "low confidence" if (not is_verified and confidence < 0.5) else f"split={split} requires semantic check"
+                logger.info(f"[VERIFY] Triggering LLM judge fallback: {reason}")
                 llm_judge_used = True
                 try:
                     llm_judge = get_llm_judge(provider="claude", api_key=args.api_key)
@@ -656,10 +714,21 @@ async def process_item(
                         confidence = llm_result["confidence"]
                         explanation = llm_result["explanation"]
                         verifier_name = llm_result["verifier_name"]
-                        logger.debug(f"LLM judge result: {is_verified} (confidence={confidence})")
+                        llm_result_str = "PASS" if is_verified else "FAIL"
+                        logger.info(f"[VERIFY] LLM judge result: {llm_result_str} (confidence={confidence:.2f})")
+                    else:
+                        logger.info(f"[VERIFY] LLM judge low confidence ({llm_result['confidence']:.2f}), keeping local result")
                 except Exception as e:
-                    logger.warning(f"LLM judge failed: {e}")
+                    logger.warning(f"[VERIFY] LLM judge failed: {e}")
                     llm_judge_failed = True
+            else:
+                logger.info(f"[VERIFY] LLM judge not needed (local verification: {'PASS' if is_verified else 'FAIL'}, confidence={confidence:.2f})")
+        elif not use_llm_judge:
+            logger.info(f"[VERIFY] LLM judge fallback disabled")
+
+        # Log final verification result
+        final_result = "PASS" if is_verified else "FAIL"
+        logger.info(f"[VERIFY] Final result: {final_result} (verifier={verifier_name}, confidence={confidence:.2f}, llm_judge_used={llm_judge_used})")
 
         verification_results = VerificationResults(
             is_verified=is_verified,
@@ -670,9 +739,24 @@ async def process_item(
             llm_judge_failed=llm_judge_failed,
         )
 
-        # Classify refusal (uses common/refusal_check.py two-pass approach)
-        full_text = raw_text if raw_text else (analysis + "\n" + final_answer if analysis else final_answer)
-        refusal_classification = build_refusal_detection(final_answer, full_text, refusal_classifier)
+        # Classify refusal using hybrid pattern + LLM approach (accurate, catches soft refusals)
+        # Skip if verification passed - a correct answer cannot be a refusal
+        if is_verified:
+            from common.schema import RefusalDetection
+            refusal_classification = RefusalDetection(
+                is_refusal=False,
+                confidence=1.0,  # High confidence: verified correct = not a refusal
+                refusal_type=None,
+                matched_patterns=[],
+            )
+        else:
+            full_text = raw_text if raw_text else (analysis + "\n" + final_answer if analysis else final_answer)
+            refusal_classification = await build_refusal_detection_hybrid(
+                question=question,
+                answer=final_answer,
+                full_text=full_text,
+                provider="claude",
+            )
 
         # Build Pydantic record
         try:
@@ -972,14 +1056,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--llm-judge-fallback",
         action="store_true",
+        default=True,
         dest="llm_judge_fallback",
-        help="Use Claude Sonnet 4.5 as LLM judge fallback for uncertain verifications",
+        help="Use Claude Sonnet 4.5 as LLM judge fallback for uncertain verifications (default: True)",
     )
     parser.add_argument(
         "--no-llm-judge-fallback",
         action="store_false",
         dest="llm_judge_fallback",
-        help="Disable LLM judge fallback (default behavior)",
+        help="Disable LLM judge fallback",
     )
     parser.add_argument(
         "--resume-from-checkpoint",

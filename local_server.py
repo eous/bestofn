@@ -41,7 +41,7 @@ Usage:
     export OPENAI_BASE_URL=http://localhost:8000/v1
     export OPENAI_API_KEY=dummy
 
-    python generate_best_of_n.py --model your-model --config experiments/baseline.yaml
+    python generate_best_of_n.py --model your-model --config experiments/baseline/baseline.yaml
 
 Requirements:
     pip install flask transformers torch
@@ -419,7 +419,7 @@ Examples:
   # Use with Best-of-N
   export OPENAI_BASE_URL=http://localhost:8000/v1
   export OPENAI_API_KEY=dummy
-  python generate_best_of_n.py --model gpt-oss-120b-nexus --config experiments/baseline.yaml
+  python generate_best_of_n.py --model gpt-oss-120b-nexus --config experiments/baseline/baseline.yaml
 
   # Test health
   curl http://localhost:8000/health

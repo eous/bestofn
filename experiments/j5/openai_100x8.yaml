@@ -25,7 +25,7 @@ persona: personas/johnny5_flexible.txt  # Johnny 5 - S-A-I-N-T Prototype Number 
 concurrency: 5  # Parallel API requests
 
 # Output
-output: experiments/results/j5_100x8.parquet
+output: experiments/j5/results/_100x8.parquet
 structured_output: true  # Use structured outputs for reliable analysis/final_answer separation
 llm_judge_fallback: true  # Use GPT-4o when symbolic verification fails (~$0.20 for 200 queries)
 
@@ -54,7 +54,7 @@ notes: |
   Expected generation time: ~1-2 hours (local server)
 
   Evaluation:
-  python scripts/evaluate_johnny5_personality.py experiments/results/j5_100x8.parquet
+  python scripts/evaluate_johnny5_personality.py experiments/j5/results/_100x8.parquet
 
   Cost: $0 (local) or ~$12 (OpenAI API)
 

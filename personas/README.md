@@ -28,12 +28,12 @@ Assistant: [Answer in persona style]
 ```bash
 # Use a persona file (OpenAI)
 python -m openai_gen.generate \
-    --config experiments/baseline.yaml \
+    --config experiments/baseline/baseline.yaml \
     --persona personas/marvin.txt
 
 # Or with Claude
 python -m claude_gen.generate \
-    --config experiments/baseline.yaml \
+    --config experiments/baseline/baseline.yaml \
     --persona personas/marvin.txt
 ```
 
@@ -150,7 +150,7 @@ Always help the team (user) WIN (solve correctly).
 
 ```bash
 python -m openai_gen.generate \
-    --config experiments/marvin_personality.yaml
+    --config experiments/marvin/personality.yaml
 ```
 
 This creates `marvin_dataset.parquet` with 2K examples in Marvin's voice.

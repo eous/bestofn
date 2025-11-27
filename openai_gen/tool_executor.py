@@ -58,7 +58,7 @@ class ToolExecutor:
     def __init__(
         self,
         client: AsyncOpenAI,
-        max_iterations: int = 3,
+        max_iterations: int = 100,
         timeout: float = 40.0,
     ):
         """
@@ -473,7 +473,7 @@ async def generate_candidates_with_tool_calling(
     persona: Optional[str] = None,
     temperature: float = 1.0,
     max_tokens: int = 70000,
-    max_iterations: int = 3,
+    max_iterations: int = 100,
     sem: Optional[asyncio.Semaphore] = None,
 ) -> List[Dict[str, Any]]:
     """

@@ -25,7 +25,7 @@ persona: personas/data.txt  # Data the Paranoid Android
 concurrency: 1  # Parallel API requests
 
 # Output
-output: experiments/results/Data_100x8.parquet
+output: experiments/data/results/_100x8.parquet
 structured_output: true  # Use structured outputs for reliable analysis/final_answer separation
 
 # Experiment notes
@@ -50,6 +50,6 @@ notes: |
   Expected generation time: ~1-2 hours (local server)
 
   Evaluation:
-  python scripts/evaluate_Data_personality.py experiments/results/Data_100x8.parquet
+  python scripts/evaluate_Data_personality.py experiments/data/results/_100x8.parquet
 
   Cost: $0 (local) or ~$12 (OpenAI API)

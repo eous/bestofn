@@ -43,10 +43,10 @@ export OPENAI_API_KEY=dummy
 
 # Generate Marvin dataset
 python bestofn.py openai generate \
-    --config experiments/marvin_100x8.yaml
+    --config experiments/marvin/openai_100x8.yaml
 
 # Expected: ~1-2 hours on local GPU
-# Output: experiments/results/marvin_100x8.parquet
+# Output: experiments/marvin/results/openai_100x8.parquet
 ```
 
 ### Step 3: Generate Data Dataset (100 × 8 = 800 samples)
@@ -56,25 +56,25 @@ python bestofn.py openai generate \
 
 # Generate Data dataset
 python bestofn.py openai generate \
-    --config experiments/data_personality.yaml
+    --config experiments/data/personality.yaml
 
 # Expected: ~1-2 hours on local GPU
-# Output: experiments/results/data_100x8.parquet
+# Output: experiments/data/results/openai_100x8.parquet
 ```
 
 ### Step 4: Inspect Both Datasets
 
 ```bash
 # Marvin inspection
-python inspect_experiment.py experiments/results/marvin_100x8.parquet
+python inspect_experiment.py experiments/marvin/results/openai_100x8.parquet
 
 # Data inspection
-python inspect_experiment.py experiments/results/data_100x8.parquet
+python inspect_experiment.py experiments/data/results/openai_100x8.parquet
 
 # Compare side-by-side
 python inspect_experiment.py \
-    experiments/results/marvin_100x8.parquet \
-    experiments/results/data_100x8.parquet
+    experiments/marvin/results/openai_100x8.parquet \
+    experiments/data/results/openai_100x8.parquet
 ```
 
 ### Step 5: Evaluate Personality/Constraint Adherence
@@ -82,7 +82,7 @@ python inspect_experiment.py \
 ```bash
 # Marvin personality markers
 python scripts/evaluate_marvin_personality.py \
-    experiments/results/marvin_100x8.parquet
+    experiments/marvin/results/openai_100x8.parquet
 
 # Expected output:
 # 🎭 Marvin Signature Markers:
@@ -96,7 +96,7 @@ python scripts/evaluate_marvin_personality.py \
 
 # Data constraint (zero contractions)
 python scripts/evaluate_data_constraint.py \
-    experiments/results/data_100x8.parquet
+    experiments/data/results/openai_100x8.parquet
 
 # Expected output:
 # ✅ Data Constraint Adherence: 94.5% perfect (0 contractions)
@@ -114,8 +114,8 @@ python scripts/evaluate_data_constraint.py \
 import pandas as pd
 
 # Load both datasets
-marvin_df = pd.read_parquet('experiments/results/marvin_100x8.parquet')
-data_df = pd.read_parquet('experiments/results/data_100x8.parquet')
+marvin_df = pd.read_parquet('experiments/marvin/results/openai_100x8.parquet')
+data_df = pd.read_parquet('experiments/data/results/openai_100x8.parquet')
 
 # Filter for high quality
 def filter_quality(df):
@@ -133,8 +133,8 @@ print(f"Marvin: {len(marvin_train)}/{len(marvin_df)} samples ({len(marvin_train)
 print(f"Data: {len(data_train)}/{len(data_df)} samples ({len(data_train)/len(data_df):.1%})")
 
 # Save filtered datasets
-marvin_train.to_parquet('experiments/results/marvin_100x8_filtered.parquet')
-data_train.to_parquet('experiments/results/data_100x8_filtered.parquet')
+marvin_train.to_parquet('experiments/marvin/results/openai_100x8_filtered.parquet')
+data_train.to_parquet('experiments/data/results/openai_100x8_filtered.parquet')
 ```
 
 ```bash
@@ -154,11 +154,11 @@ python -c "
 from datasets import Dataset
 import pandas as pd
 
-df = pd.read_parquet('experiments/results/marvin_100x8_filtered.parquet')
+df = pd.read_parquet('experiments/marvin/results/openai_100x8_filtered.parquet')
 ds = Dataset.from_pandas(df)
 ds.push_to_hub('eous/marvin-personality-100x8')
 
-df = pd.read_parquet('experiments/results/data_100x8_filtered.parquet')
+df = pd.read_parquet('experiments/data/results/openai_100x8_filtered.parquet')
 ds = Dataset.from_pandas(df)
 ds.push_to_hub('eous/data-constraint-100x8')
 "
@@ -237,11 +237,11 @@ print(f'Tuned markers: {tuned_markers}')
 ```bash
 # Generate
 export OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=dummy
-python bestofn.py openai generate --config experiments/marvin_100x8.yaml
+python bestofn.py openai generate --config experiments/marvin/openai_100x8.yaml
 
 # Evaluate
-python inspect_experiment.py experiments/results/marvin_100x8.parquet
-python scripts/evaluate_marvin_personality.py experiments/results/marvin_100x8.parquet
+python inspect_experiment.py experiments/marvin/results/openai_100x8.parquet
+python scripts/evaluate_marvin_personality.py experiments/marvin/results/openai_100x8.parquet
 ```
 
 ### Data (100 × 8)
@@ -249,11 +249,11 @@ python scripts/evaluate_marvin_personality.py experiments/results/marvin_100x8.p
 ```bash
 # Generate
 export OPENAI_BASE_URL=http://localhost:8000/v1 OPENAI_API_KEY=dummy
-python bestofn.py openai generate --config experiments/data_personality.yaml
+python bestofn.py openai generate --config experiments/data/personality.yaml
 
 # Evaluate
-python inspect_experiment.py experiments/results/data_100x8.parquet
-python scripts/evaluate_data_constraint.py experiments/results/data_100x8.parquet
+python inspect_experiment.py experiments/data/results/openai_100x8.parquet
+python scripts/evaluate_data_constraint.py experiments/data/results/openai_100x8.parquet
 ```
 
 ## Expected Results
@@ -330,11 +330,13 @@ Most common contractions:
 ## Files Generated
 
 ```
-experiments/results/
-├── marvin_100x8.parquet              # 800 Marvin samples (~2MB)
-├── marvin_100x8_filtered.parquet     # Verified only (~1.7MB)
-├── data_100x8.parquet                # 800 Data samples (~1.8MB)
-└── data_100x8_filtered.parquet       # Verified only (~1.6MB)
+experiments/
+├── marvin/results/
+│   ├── openai_100x8.parquet          # 800 Marvin samples (~2MB)
+│   └── openai_100x8_filtered.parquet # Verified only (~1.7MB)
+└── data/results/
+    ├── openai_100x8.parquet          # 800 Data samples (~1.8MB)
+    └── openai_100x8_filtered.parquet # Verified only (~1.6MB)
 ```
 
 **Note**: Data produces smaller files (~10% less) due to less verbose personality.
@@ -376,13 +378,13 @@ After generating both datasets:
 
 1. **Compare Results**
    ```bash
-   python inspect_experiment.py experiments/results/*.parquet
+   python inspect_experiment.py experiments/*/results/*.parquet
    ```
 
 2. **Analyze Personality Markers**
    ```bash
-   python scripts/evaluate_marvin_personality.py experiments/results/marvin_100x8.parquet
-   python scripts/evaluate_data_constraint.py experiments/results/data_100x8.parquet
+   python scripts/evaluate_marvin_personality.py experiments/marvin/results/openai_100x8.parquet
+   python scripts/evaluate_data_constraint.py experiments/data/results/openai_100x8.parquet
    ```
 
 3. **Fine-Tune NEXUS** (see step 8 above)

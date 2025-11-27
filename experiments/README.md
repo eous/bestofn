@@ -1,49 +1,106 @@
 # Experiment Configuration System
 
-Organize and track Best-of-N experiments with YAML configs and parquet metadata.
+Organize and track Best-of-N personality transfer experiments with YAML configs and parquet metadata.
+
+## Directory Structure
+
+```
+experiments/
+├── marvin/               # Marvin the Paranoid Android (negative affect)
+│   ├── openai_100x8.yaml
+│   ├── claude_100x8.yaml
+│   ├── personality.yaml
+│   ├── tool_calling.yaml
+│   └── results/
+├── data/                 # Data from Star Trek (neutral affect)
+│   ├── openai_100x8.yaml
+│   ├── claude_100x8.yaml
+│   ├── personality.yaml
+│   └── results/
+├── j5/                   # Johnny 5 from Short Circuit (positive affect)
+│   ├── openai_100x8.yaml
+│   ├── claude_100x8.yaml
+│   ├── tool_calling.yaml
+│   └── results/
+└── baseline/             # Non-persona baseline experiments
+    ├── baseline.yaml
+    ├── high_throughput.yaml
+    ├── math_focused.yaml
+    └── results/
+```
 
 ## Quick Start
 
 ```bash
-# Run experiment from config (OpenAI)
-python -m openai_gen.generate --config experiments/baseline.yaml
+# Run persona experiment (OpenAI)
+python -m openai_gen.generate --config experiments/marvin/openai_100x8.yaml
 
-# Run experiment from config (Claude)
-python -m claude_gen.generate --config experiments/baseline.yaml
+# Run persona experiment (Claude)
+python -m claude_gen.generate --config experiments/j5/claude_100x8.yaml
 
 # Override specific parameters
 python -m openai_gen.generate \
-    --config experiments/baseline.yaml \
+    --config experiments/data/openai_100x8.yaml \
     --model gpt-4o \
     --max-queries 200
 
 # Inspect results
-python inspect_experiment.py experiments/results/baseline_run.parquet
+python inspect_experiment.py experiments/marvin/results/openai_100x8.parquet
 
 # Compare multiple runs
-python inspect_experiment.py experiments/results/*.parquet
+python inspect_experiment.py experiments/*/results/*.parquet
 ```
+
+## Personality Transfer Experiments
+
+### Marvin (`experiments/marvin/`)
+Marvin the Paranoid Android from Hitchhiker's Guide - **negative affect**
+- Signature markers: "brain the size of a planet", existential despair, sarcasm
+- Persona file: `personas/marvin_flexible.txt`
+
+### Data (`experiments/data/`)
+Data from Star Trek TNG - **neutral affect**
+- Signature markers: "Fascinating", no contractions, logical precision
+- Persona file: `personas/data_flexible.txt`
+
+### Johnny 5 (`experiments/j5/`)
+Johnny 5 from Short Circuit - **positive affect**
+- Signature markers: "INPUT!", enthusiasm, pop culture references
+- Persona file: `personas/johnny5_flexible.txt`
+
+### Baseline (`experiments/baseline/`)
+Non-persona experiments for establishing baseline metrics and comparison.
 
 ## Config File Structure
 
 ```yaml
 # Dataset configuration
-dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
 splits: math,code,tool_calling
 streaming: true
-max_queries: 100
+max_queries: 200
 
 # Generation parameters
-model: gpt-4o-mini
-num_candidates: 4
-temperature: 0.7
-max_tokens: 131072
+model: claude-sonnet-4-5-20250929
+num_candidates: 8
+temperature: 1.0
+max_tokens: 16384
+
+# Persona
+persona: personas/marvin_flexible.txt
 
 # Performance
-concurrency: 10
+concurrency: 3
 
-# Output
-output: experiments/results/my_experiment.parquet
+# Output (relative to repo root)
+output: experiments/marvin/results/claude_100x8.parquet
+
+# Generator type (claude or openai)
+generator: claude
+
+# Optional features
+structured_output: true
+llm_judge_fallback: true
 
 # Experiment notes (saved in parquet metadata)
 notes: |
@@ -58,64 +115,41 @@ notes: |
 
 Example:
 ```bash
-# Config says max_queries: 100
+# Config says max_queries: 200
 # CLI overrides to 50
-python generate_best_of_n.py \
-    --config experiments/baseline.yaml \
+python -m claude_gen.generate \
+    --config experiments/j5/claude_100x8.yaml \
     --max-queries 50  # This wins
 ```
-
-## Provided Experiments
-
-### `baseline.yaml`
-Quick baseline run on all splits with minimal queries.
-- **Purpose**: Establish baseline metrics
-- **Model**: gpt-4o-mini (cheap)
-- **Queries**: 100 per split
-- **Use case**: Quick validation, debugging
-
-### `math_focused.yaml`
-Deep dive into math verification with more candidates.
-- **Purpose**: Study verification distribution
-- **Model**: gpt-4o (better quality)
-- **Queries**: 1000 math problems
-- **Candidates**: N=10 (study marginal value)
-- **Use case**: Analyze "does first win?" and "what's optimal N?"
-
-### `high_throughput.yaml`
-Production-scale data generation.
-- **Purpose**: Generate training data
-- **Model**: gpt-4o-mini (cost-effective)
-- **Queries**: 10K per split (20K total)
-- **Concurrency**: 50 (fast)
-- **Use case**: Reward model training data
 
 ## Creating Custom Experiments
 
 ```yaml
-# experiments/my_experiment.yaml
-dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+# experiments/marvin/my_experiment.yaml
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
 splits: code  # Focus on one split
 max_queries: 500
-model: gpt-4o
-num_candidates: 8  # Try different N
+model: claude-sonnet-4-5-20250929
+num_candidates: 8
 temperature: 0.9  # Higher diversity
-output: experiments/results/my_experiment.parquet
+persona: personas/marvin_flexible.txt
+output: experiments/marvin/results/my_experiment.parquet
+generator: claude
 notes: |
   Testing hypothesis: Higher temperature improves
-  code generation diversity and verification rates.
+  personality expression in code generation.
 ```
 
 Then run:
 ```bash
-python -m openai_gen.generate --config experiments/my_experiment.yaml
+python -m claude_gen.generate --config experiments/marvin/my_experiment.yaml
 ```
 
 ## Inspecting Results
 
 ### Single Experiment
 ```bash
-python inspect_experiment.py experiments/results/baseline_run.parquet
+python inspect_experiment.py experiments/marvin/results/claude_100x8.parquet
 ```
 
 Output shows:
@@ -127,8 +161,8 @@ Output shows:
 ### Comparing Experiments
 ```bash
 python inspect_experiment.py \
-    experiments/results/baseline_run.parquet \
-    experiments/results/math_n10.parquet
+    experiments/marvin/results/claude_100x8.parquet \
+    experiments/marvin/results/openai_100x8.parquet
 ```
 
 Side-by-side comparison of:
@@ -164,53 +198,44 @@ Metadata includes:
 ### 1. Always Add Notes
 ```yaml
 notes: |
-  What: Testing math verification accuracy
-  Why: Previous runs showed 60% false negatives
-  Hypothesis: SymPy verifier will improve to 95%+
-  Expected outcome: Verification rate >90%
+  What: Testing Marvin personality transfer on math
+  Why: Verify personality doesn't hurt accuracy
+  Hypothesis: Can maintain >90% verification with personality
+  Expected outcome: Verification rate comparable to baseline
 ```
 
 ### 2. Use Descriptive Filenames
 ```yaml
-output: experiments/results/math_sympy_n4_temp07_20241120.parquet
+output: experiments/marvin/results/claude_temp09_20241120.parquet
 ```
 
 ### 3. Start Small, Scale Up
 ```bash
 # First: Quick test with 10 queries
-python -m openai_gen.generate \
-    --config experiments/baseline.yaml \
+python -m claude_gen.generate \
+    --config experiments/j5/claude_100x8.yaml \
     --max-queries 10
 
 # Then: Full run
-python -m openai_gen.generate \
-    --config experiments/baseline.yaml
+python -m claude_gen.generate \
+    --config experiments/j5/claude_100x8.yaml
 ```
 
 ### 4. Version Your Configs
 ```bash
-git add experiments/my_experiment_v1.yaml
-git commit -m "Experiment: baseline math verification"
+git add experiments/marvin/my_experiment_v1.yaml
+git commit -m "Experiment: Marvin personality with high temperature"
 ```
 
 ### 5. Keep Results Organized
-```
-experiments/
-├── baseline.yaml
-├── math_focused.yaml
-├── high_throughput.yaml
-└── results/
-    ├── baseline_20241120.parquet
-    ├── math_n10_20241120.parquet
-    └── production_20k_20241120.parquet
-```
+Results are automatically saved in each persona's `results/` directory.
 
 ## Analyzing Results
 
 ### Load into pandas
 ```python
 import pandas as pd
-df = pd.read_parquet('experiments/results/baseline_run.parquet')
+df = pd.read_parquet('experiments/marvin/results/claude_100x8.parquet')
 
 # Verification rate by split
 df.groupby('split')['is_verified'].mean()
@@ -224,37 +249,33 @@ print(f"First: {first_wins:.2%}, Best: {any_wins:.2%}")
 
 ### Compare experiments
 ```python
-baseline = pd.read_parquet('experiments/results/baseline.parquet')
-improved = pd.read_parquet('experiments/results/improved.parquet')
+baseline = pd.read_parquet('experiments/baseline/results/baseline.parquet')
+marvin = pd.read_parquet('experiments/marvin/results/claude_100x8.parquet')
 
 # Join on same queries
 comparison = baseline.merge(
-    improved,
+    marvin,
     on='query_id',
-    suffixes=['_baseline', '_improved']
+    suffixes=['_baseline', '_marvin']
 )
 
-# Where did improvement help?
-comparison['improved'] = (
-    comparison['is_verified_improved'] >
-    comparison['is_verified_baseline']
-)
-print(comparison.groupby('split_baseline')['improved'].mean())
+# Does personality hurt verification?
+print(f"Baseline: {baseline['is_verified'].mean():.2%}")
+print(f"Marvin: {marvin['is_verified'].mean():.2%}")
 ```
 
 ## Tips for Exploration
 
-1. **Run small experiments frequently** - 100 queries × 4 candidates = 400 API calls ≈ $4
+1. **Run small experiments frequently** - 200 queries × 8 candidates = 1,600 API calls
 2. **Save everything** - Disk is cheap, re-running expensive
 3. **Track your intuitions in notes** - Future you will thank you
-4. **Compare side-by-side** - "Did that change actually help?"
-5. **Look for patterns** - Which splits are hard? Where do verifiers fail?
+4. **Compare side-by-side** - "Did personality hurt accuracy?"
+5. **Look for patterns** - Which splits preserve personality best?
 
 ## Cost Estimation
 
-Rough costs (at $0.01/call):
-- **baseline.yaml**: 100 queries × 3 splits × 4 candidates = 1,200 calls ≈ $12
-- **math_focused.yaml**: 1,000 queries × 1 split × 10 candidates = 10,000 calls ≈ $100
-- **high_throughput.yaml**: 10,000 queries × 2 splits × 4 candidates = 80,000 calls ≈ $800
+Rough costs vary by model:
+- **Claude Sonnet**: ~$3/1M input, ~$15/1M output
+- **GPT-4o-mini**: ~$0.15/1M input, ~$0.60/1M output
 
-Always start small!
+Always start small with `--max-queries 10` to validate your config!

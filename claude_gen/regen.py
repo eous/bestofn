@@ -34,7 +34,7 @@ if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
 # Import from Claude generate module
-from claude_gen.generate import generate_candidates_claude
+from claude_gen.generate import generate_candidates_with_structured_output
 
 # Import shared regen utilities from common module
 from common.regen_pipeline import (
@@ -68,7 +68,7 @@ async def regenerate_query(
     logger.info(f"Regenerating query {query_id}: {question[:50]}... (split: {split})")
 
     try:
-        candidates = await generate_candidates_claude(
+        candidates = await generate_candidates_with_structured_output(
             client=client,
             model=model,
             question=question,

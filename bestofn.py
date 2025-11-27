@@ -6,10 +6,10 @@ A single entry point for all generation and regeneration tasks.
 
 Usage:
     # Generate with OpenAI
-    python bestofn.py openai generate --config experiments/j5_100x8.yaml
+    python bestofn.py openai generate --config experiments/j5/openai_100x8.yaml
 
     # Generate with Claude
-    python bestofn.py claude generate --config experiments/marvin_claude_100x8.yaml
+    python bestofn.py claude generate --config experiments/marvin/claude_100x8.yaml
 
     # Regenerate failed rows (OpenAI)
     python bestofn.py openai regen results.parquet --split tool_calling --failed-only

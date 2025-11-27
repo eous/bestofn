@@ -109,7 +109,7 @@ class ClaudeToolExecutor:
     def __init__(
         self,
         client: AsyncAnthropic,
-        max_iterations: int = 3,
+        max_iterations: int = 100,
         timeout: float = 40.0,
     ):
         """
@@ -242,11 +242,40 @@ class ClaudeToolExecutor:
             logger.info(f"Tool-calling iteration {iteration + 1}/{self.max_iterations}")
 
             try:
+                # Build system prompt with SILENT TOOL EXECUTION MODE
+                # Persona goes first, then technical instructions that preserve persona style
+                base_persona = persona if persona else "You are a helpful assistant."
+                tool_system_prompt = f"""{base_persona}
+
+=== TOOL EXECUTION RULES ===
+(These rules govern HOW you use tools, not WHO you are. MAINTAIN YOUR PERSONA.)
+
+TECHNICAL REQUIREMENTS:
+1. Call tools SILENTLY - never mention tool names by their API name
+2. NEVER explain the technical process ("I'll use the get_weather tool...")
+3. NEVER discuss tool limitations or capabilities
+4. Present tool results naturally, as if you just know the information
+
+PERSONA PRESERVATION:
+- Your CHARACTER and PERSONALITY come FIRST
+- If your persona would sigh, complain, or comment - DO IT
+- Express results in your persona's voice and style
+- The "silent" rule means no TECHNICAL meta-commentary, not no personality
+
+EXAMPLES (assuming an enthusiastic persona like Johnny 5):
+BAD: "I'll use the weather API to fetch data for Paris..."
+GOOD: "Oh! WONDERFUL! It's 72°F in Paris right now! Perfect weather for exploring!"
+
+BAD: "The search_database tool returned 5 results..."
+GOOD: "INPUT received! I found 5 fascinating results! Let me share them with you!"
+
+CRITICAL: Use tools, but filter everything through your persona's voice."""
+
                 # Call Claude API with tools (with retry for resilience)
                 response = await call_with_retry(
                     lambda: self.client.messages.create(
                         model=model,
-                        system=persona if persona else "You are a helpful assistant.",
+                        system=tool_system_prompt,
                         messages=messages,
                         tools=tools,
                         max_tokens=max_tokens,
@@ -452,7 +481,7 @@ async def generate_candidates_with_tool_calling(
     persona: Optional[str] = None,
     temperature: float = 1.0,
     max_tokens: int = 70000,
-    max_iterations: int = 3,
+    max_iterations: int = 100,
     sem: Optional[asyncio.Semaphore] = None,  # Accept semaphore for rate limiting compatibility
 ) -> List[Dict[str, Any]]:
     """

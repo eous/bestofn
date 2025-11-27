@@ -20,17 +20,57 @@ from typing import Dict, Any, Optional, Literal
 logger = logging.getLogger(__name__)
 
 
+def _escape_latex_backslashes(text: str) -> str:
+    """
+    Escape LaTeX backslashes in JSON strings to make them valid JSON.
+
+    LaTeX commands like ``\\frac``, ``\\sqrt`` contain backslashes that are
+    invalid JSON escape sequences (``\\f`` is form feed, ``\\s`` is invalid).
+    This function converts them to escaped backslashes.
+
+    Only escapes backslashes that are NOT valid JSON escapes:
+    - Valid JSON escapes: ``\\"``, ``\\\\``, ``\\/``, ``\\b``, ``\\f``, ``\\n``, ``\\r``, ``\\t``, ``\\uXXXX``
+    - Invalid (LaTeX): ``\\frac``, ``\\sqrt``, ``\\pi``, ``\\cdot``, etc.
+
+    Args:
+        text: JSON string with potential LaTeX backslashes
+
+    Returns:
+        String with LaTeX backslashes properly escaped
+    """
+    # Valid JSON escape sequences (the character after backslash)
+    valid_escapes = set('"\\bfnrtu/')
+
+    result = []
+    i = 0
+    while i < len(text):
+        if text[i] == '\\' and i + 1 < len(text):
+            next_char = text[i + 1]
+            if next_char in valid_escapes:
+                # Valid JSON escape - keep as is
+                result.append(text[i])
+            else:
+                # Invalid escape (likely LaTeX) - double the backslash
+                result.append('\\\\')
+                i += 1
+                continue
+        result.append(text[i])
+        i += 1
+    return ''.join(result)
+
+
 def _repair_json(text: str) -> str:
     """
-    Attempt to repair malformed JSON that uses Python dict syntax.
+    Attempt to repair malformed JSON that uses Python dict syntax or LaTeX.
 
     GPT-4o sometimes returns Python dict format instead of valid JSON.
-    This function converts common patterns to valid JSON before parsing.
+    Claude sometimes returns LaTeX math in reasoning that breaks JSON parsing.
 
     Repairs performed:
-    - Single quotes → double quotes (for keys and string values)
-    - Python booleans (True/False) → JSON booleans (true/false)
-    - Python None → JSON null
+    - LaTeX backslashes (frac, sqrt) escaped to valid JSON
+    - Single quotes to double quotes (for keys and string values)
+    - Python booleans (True/False) to JSON booleans (true/false)
+    - Python None to JSON null
 
     Args:
         text: Potentially malformed JSON string
@@ -42,13 +82,17 @@ def _repair_json(text: str) -> str:
         >>> _repair_json("{'is_correct': True, 'value': None}")
         '{"is_correct": true, "value": null}'
     """
-    # Skip if it looks like valid JSON already
+    import re
+
+    # First, escape LaTeX backslashes (common in math reasoning)
+    text = _escape_latex_backslashes(text)
+
+    # Skip remaining repairs if it looks like valid JSON already
     if text.strip().startswith('{') and '"' in text:
         return text
 
     # Replace single quotes with double quotes, but be careful about apostrophes
     # Strategy: replace 'key': patterns and ': 'value' patterns
-    import re
 
     # Replace keys: 'key': -> "key":
     text = re.sub(r"'(\w+)'(\s*:)", r'"\1"\2', text)
@@ -138,17 +182,12 @@ Examples of equivalent answers:
 - Monday  and  monday (case insensitive for text answers)"""
 
         elif split == "code":
-            domain_instructions = """You are a code reviewer.
-Two code solutions are equivalent if they produce the same output for the same inputs, even if implemented differently.
-
-Check for:
-- Correctness of logic
-- Same functionality
-- Edge cases handled"""
+            domain_instructions = """Does this code produce CORRECT OUTPUT? (Efficiency doesn't matter)
+Answer: equivalent=true if correct, equivalent=false only if you found a BUG."""
 
         else:  # tool_calling
-            domain_instructions = """You are checking tool call equivalence.
-Two tool calls are equivalent if they call the same function with equivalent parameters."""
+            domain_instructions = """Did this response accomplish the SAME TASK as the ground truth? (Format doesn't matter)
+Answer: equivalent=true if same result achieved, equivalent=false only if WRONG result or task NOT completed."""
 
         return f'''{domain_instructions}
 
@@ -161,11 +200,11 @@ CANDIDATE ANSWER:
 GROUND TRUTH:
 {ground_truth}
 
-Are these answers equivalent? Respond ONLY with valid JSON (no other text):
+Respond with JSON only:
 {{
   "equivalent": true or false,
   "confidence": 0.0 to 1.0,
-  "reasoning": "brief explanation"
+  "reasoning": "ONE SENTENCE explaining your decision"
 }}'''
 
     async def _call_openai(self, prompt: str) -> str:
@@ -180,14 +219,19 @@ Are these answers equivalent? Respond ONLY with valid JSON (no other text):
         return response.choices[0].message.content
 
     async def _call_claude(self, prompt: str) -> str:
-        """Call Claude API."""
+        """Call Claude API with JSON enforcement via prefill technique."""
         response = await self.client.messages.create(
             model=self.model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=300,
+            system="Output valid JSON only. No other text, no markdown, no explanation outside JSON.",
+            messages=[
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": "{"}  # Prefill forces JSON start
+            ],
+            max_tokens=1000,  # Increased for reasoning-first approach
             temperature=0.0,
         )
-        return response.content[0].text
+        # Prepend the '{' we used for prefill
+        return "{" + response.content[0].text
 
     async def verify(
         self,
@@ -230,17 +274,67 @@ Are these answers equivalent? Respond ONLY with valid JSON (no other text):
 
             response_text = response_text.strip()
 
-            # Parse JSON from response (handle potential markdown code blocks)
-            json_match = re.search(r'\{[^{}]*\}', response_text, re.DOTALL)
-            json_text = json_match.group() if json_match else response_text
+            # Strategy: Try parsing in order of likelihood
+            # 1. Full response (LLM often returns clean JSON)
+            # 2. Strip markdown code blocks if present
+            # 3. Fallback regex (last resort, can fail with nested braces)
 
-            # Try parsing directly first, then with repair
+            json_text = response_text
+            result = None
+            first_error = None
+
+            # Try 1: Parse full response directly
             try:
-                result = json.loads(json_text)
-            except json.JSONDecodeError:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                first_error = e
+
+                # Try 2: Strip markdown code blocks (```json ... ```)
+                code_block_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+                if code_block_match:
+                    json_text = code_block_match.group(1)
+                    try:
+                        result = json.loads(json_text)
+                    except json.JSONDecodeError:
+                        pass
+
+                # Try 3: Find JSON that starts at beginning (handles trailing text)
+                if result is None and response_text.startswith('{'):
+                    # Find matching closing brace by counting
+                    depth = 0
+                    end_idx = 0
+                    for i, char in enumerate(response_text):
+                        if char == '{':
+                            depth += 1
+                        elif char == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end_idx = i + 1
+                                break
+                    if end_idx > 0:
+                        json_text = response_text[:end_idx]
+                        try:
+                            result = json.loads(json_text)
+                        except json.JSONDecodeError:
+                            pass
+
+            # If still no result, try repair on best candidate
+            if result is None:
                 # Attempt to repair malformed JSON (single quotes, Python bools, etc.)
                 repaired_text = _repair_json(json_text)
-                result = json.loads(repaired_text)
+                try:
+                    result = json.loads(repaired_text)
+                except json.JSONDecodeError as repair_error:
+                    # Log detailed diagnostics before re-raising
+                    logger.error(
+                        f"LLM judge JSON parse failed after repair attempt:\n"
+                        f"  Original error: {first_error}\n"
+                        f"  Repair error: {repair_error}\n"
+                        f"  Raw LLM response ({len(response_text)} chars): {response_text[:500]}{'...' if len(response_text) > 500 else ''}\n"
+                        f"  Extracted JSON text: {json_text[:300]}{'...' if len(json_text) > 300 else ''}\n"
+                        f"  After repair: {repaired_text[:300]}{'...' if len(repaired_text) > 300 else ''}"
+                    )
+                    raise
 
             verification_result = {
                 "is_correct": result.get("equivalent", False),
@@ -258,11 +352,19 @@ Are these answers equivalent? Respond ONLY with valid JSON (no other text):
             return verification_result
 
         except Exception as e:
-            logger.error(f"LLM judge verification failed: {e}")
+            # Include truncated context for debugging
+            question_preview = question[:100] + "..." if len(question) > 100 else question
+            candidate_preview = candidate_answer[:100] + "..." if len(candidate_answer) > 100 else candidate_answer
+            logger.error(
+                f"LLM judge verification failed: {type(e).__name__}: {e}\n"
+                f"  Split: {split}\n"
+                f"  Question: {question_preview}\n"
+                f"  Candidate answer: {candidate_preview}"
+            )
             return {
                 "is_correct": False,
                 "confidence": 0.0,
-                "explanation": f"LLM judge error: {e}",
+                "explanation": f"LLM judge error: {type(e).__name__}: {e}",
                 "verifier_name": "llm_judge",
             }
 

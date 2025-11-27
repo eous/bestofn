@@ -1,14 +1,14 @@
-# Marvin Personality Transfer - Claude Extended Thinking
-# Compare Claude vs OpenAI for persona transfer
+# Marvin Personality Transfer - Claude Opus 4.5
+# 500 queries x 2 candidates = 1000 samples
 
 dataset: nvidia/Nemotron-Post-Training-Dataset-v2
 splits: math,code,tool_calling
 streaming: true
-max_queries: 100
+max_queries: 500
 
 # Claude parameters
-model: claude-sonnet-4-5-20250929  # Latest Claude Sonnet
-num_candidates: 8
+model: claude-opus-4-5-20251101  # Claude Opus 4.5
+num_candidates: 2
 temperature: 1.0
 max_tokens: 8192  # Claude's extended thinking needs more tokens
 
@@ -16,10 +16,10 @@ max_tokens: 8192  # Claude's extended thinking needs more tokens
 persona: personas/marvin_flexible.txt
 
 # Performance
-concurrency: 5  # Claude has lower rate limits than OpenAI
+concurrency: 10  # Tier 4 rate limits allow higher concurrency
 
 # Output
-output: experiments/results/marvin_claude_100x8.parquet
+output: experiments/marvin/results/_claude_100x8.parquet
 
 notes: |
   MARVIN PERSONALITY TRANSFER - CLAUDE VERSION

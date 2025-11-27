@@ -9,7 +9,7 @@ This package contains:
 
 # Main generation functions
 from claude_gen.generate import (
-    generate_candidates_claude,
+    generate_candidates_with_structured_output,
     process_item,
     main,
 )
@@ -29,7 +29,7 @@ from claude_gen.tool_executor import (
 
 __all__ = [
     # Generate
-    "generate_candidates_claude",
+    "generate_candidates_with_structured_output",
     "process_item",
     "main",
     # Regen

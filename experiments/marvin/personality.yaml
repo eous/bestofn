@@ -28,7 +28,7 @@ persona: personas/marvin.txt  # Path to Marvin persona file
 concurrency: 1  # Reduce to 5 if using local server (less overhead)
 
 # Output
-output: experiments/results/marvin_dataset.parquet
+output: experiments/marvin/results/_dataset.parquet
 
 # Experiment notes
 notes: |
@@ -87,5 +87,5 @@ notes: |
   - NEXUS training: Minimal (local GPU, ~3 hours)
 
   After generation:
-  python inspect_experiment.py experiments/results/marvin_dataset.parquet
+  python inspect_experiment.py experiments/marvin/results/_dataset.parquet
   # Check: refusal rate <5%, quality metrics, Harmony channel usage

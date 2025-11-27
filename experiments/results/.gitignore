@@ -1,7 +1,0 @@
-# Ignore experiment results (they can be large)
-*.parquet
-*.json
-*.csv
-
-# But keep the directory structure
-!.gitignore

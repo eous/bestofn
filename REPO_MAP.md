@@ -51,17 +51,29 @@ bestofn/
 │   └── build_docker.sh     # Docker build script
 │
 ├── experiments/            # Experiment configurations
-│   ├── README.md
-│   ├── QUICKREF.md
-│   ├── *.yaml              # Experiment configs
-│   └── results/            # Generated parquet files
+│   ├── README.md           # Full documentation
+│   ├── QUICKREF.md         # Quick reference
+│   ├── marvin/             # Marvin persona experiments
+│   │   ├── openai_100x8.yaml
+│   │   ├── claude_100x8.yaml
+│   │   └── results/
+│   ├── data/               # Data persona experiments
+│   │   ├── openai_100x8.yaml
+│   │   ├── claude_100x8.yaml
+│   │   └── results/
+│   ├── j5/                 # Johnny 5 persona experiments
+│   │   ├── openai_100x8.yaml
+│   │   ├── claude_100x8.yaml
+│   │   └── results/
+│   └── baseline/           # Non-persona baseline experiments
+│       ├── baseline.yaml
+│       └── results/
 │
 ├── personas/               # Persona definitions
 │   ├── README.md
-│   ├── marvin.txt          # Marvin persona
-│   ├── marvin_flexible.txt # Flexible Marvin
-│   ├── data.txt            # Data persona
-│   └── data_flexible.txt   # Flexible Data
+│   ├── marvin_flexible.txt # Marvin the Paranoid Android (negative affect)
+│   ├── data_flexible.txt   # Lt. Cmd. Data (neutral affect)
+│   └── johnny5_flexible.txt # Johnny 5 (positive affect)
 │
 ├── HARMONY.md              # Harmony format spec (multi-channel outputs)
 │

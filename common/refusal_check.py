@@ -2,9 +2,14 @@
 """
 Refusal Detection Utilities.
 
-Provides a helper function to check for refusals in model responses.
-Uses a two-pass approach: checks the answer first, then the full response
-if no refusal is detected in the answer.
+Provides helper functions to check for refusals in model responses.
+
+Two modes available:
+1. Pattern-based (fast, sync): Uses regex patterns for common refusal phrases
+2. Hybrid (accurate, async): Pattern-based + LLM fallback for soft refusals
+
+The hybrid mode is recommended for accuracy as it catches "soft refusals"
+where models decline by explaining tool limitations rather than saying "I can't".
 """
 
 import logging
@@ -111,6 +116,105 @@ def build_refusal_detection(
     from common.schema import RefusalDetection
 
     result = check_refusal(answer, full_text, classifier)
+    return RefusalDetection(
+        is_refusal=result["is_refusal"],
+        confidence=result["confidence"],
+        refusal_type=result["refusal_type"],
+        matched_patterns=result["matched_patterns"],
+    )
+
+
+async def check_refusal_hybrid(
+    question: str,
+    answer: str,
+    full_text: Optional[str] = None,
+    persona: Optional[str] = None,
+    provider: str = "claude",
+) -> dict:
+    """
+    Hybrid refusal detection: pattern-based + LLM fallback for accuracy.
+
+    This is the recommended method for production use as it catches:
+    - Direct refusals: "I cannot help with that"
+    - Soft refusals: "The tools aren't designed for this task"
+    - Tool-based refusals: "They won't be able to help"
+
+    Args:
+        question: The original user question/task (needed for LLM context)
+        answer: The final answer text
+        full_text: Optional full response text for additional context
+        persona: Optional persona name for whitelist patterns
+        provider: LLM provider for fallback ("claude" or "openai")
+
+    Returns:
+        Dict with keys:
+        - is_refusal: bool
+        - confidence: float
+        - refusal_type: Optional[str]
+        - matched_patterns: List[str]
+        - llm_judge_used: bool
+        - reasoning: str (if LLM was used)
+
+    Example:
+        result = await check_refusal_hybrid(
+            question="Create an art curriculum",
+            answer="The tools aren't designed for this...",
+        )
+        # result['is_refusal'] == True (soft refusal detected)
+    """
+    from verifiers.refusal_classifier import classify_refusal_hybrid
+
+    # Use full_text if provided, otherwise use answer
+    response_text = full_text if full_text else answer
+
+    result = await classify_refusal_hybrid(
+        question=question,
+        response=response_text,
+        persona=persona,
+        use_llm=True,
+        provider=provider,
+    )
+
+    return {
+        "is_refusal": result.get("is_refusal", False),
+        "confidence": result.get("confidence", 0.0),
+        "refusal_type": result.get("refusal_type"),
+        "matched_patterns": result.get("matched_patterns", []),
+        "llm_judge_used": result.get("llm_judge_used", False),
+        "reasoning": result.get("reasoning", ""),
+    }
+
+
+async def build_refusal_detection_hybrid(
+    question: str,
+    answer: str,
+    full_text: Optional[str] = None,
+    persona: Optional[str] = None,
+    provider: str = "claude",
+) -> 'RefusalDetection':
+    """
+    Hybrid refusal detection returning RefusalDetection schema object.
+
+    Args:
+        question: The original user question/task
+        answer: The final answer text
+        full_text: Optional full response text
+        persona: Optional persona name
+        provider: LLM provider ("claude" or "openai")
+
+    Returns:
+        RefusalDetection schema object
+    """
+    from common.schema import RefusalDetection
+
+    result = await check_refusal_hybrid(
+        question=question,
+        answer=answer,
+        full_text=full_text,
+        persona=persona,
+        provider=provider,
+    )
+
     return RefusalDetection(
         is_refusal=result["is_refusal"],
         confidence=result["confidence"],

@@ -16,7 +16,7 @@ persona: personas/johnny5_flexible.txt
 concurrency: 5
 
 # Output to separate file to avoid overwriting existing results
-output: experiments/results/j5_tool_calling.parquet
+output: experiments/j5/results/_tool_calling.parquet
 structured_output: true
 llm_judge_fallback: true
 
