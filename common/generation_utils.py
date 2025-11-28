@@ -209,11 +209,18 @@ def extract_plan_steps(plan_text: str) -> List[str]:
 # Verifier Selection
 # =============================================================================
 
+# Singleton cache for verifiers to avoid file descriptor exhaustion
+# (DockerSandbox in CodeVerifier creates Docker connections that leak FDs if not reused)
+_VERIFIER_CACHE: Dict[str, Any] = {}
+
+
 def get_verifier(split: str, row: Dict[str, Any]) -> Tuple[Any, Dict[str, Any]]:
     """
     Factory to select the correct verifier based on data split + row.
 
     Uses enhanced verifier system from verifiers module.
+    Caches verifier instances per-split to avoid file descriptor exhaustion
+    from repeated DockerSandbox creation.
 
     Args:
         split: Dataset split (math, code, tool_calling)
@@ -222,6 +229,7 @@ def get_verifier(split: str, row: Dict[str, Any]) -> Tuple[Any, Dict[str, Any]]:
     Returns:
         Tuple of (verifier_instance, spec_dict)
     """
+    global _VERIFIER_CACHE
     from verifiers import get_verifier_for_split, load_config as load_verifier_config
 
     spec: Dict[str, Any] = {}
@@ -241,17 +249,21 @@ def get_verifier(split: str, row: Dict[str, Any]) -> Tuple[Any, Dict[str, Any]]:
                 spec["ground_truth"] = ground_truth
                 break
 
-    # Load verifier config
-    try:
-        verifier_config = load_verifier_config()
-        config_dict = verifier_config.get_verifier_config(split) if verifier_config else None
-    except Exception as e:
-        logger.warning(f"Could not load verifier config: {e}, using defaults")
-        config_dict = None
+    # Get cached verifier or create new one
+    if split not in _VERIFIER_CACHE:
+        # Load verifier config
+        try:
+            verifier_config = load_verifier_config()
+            config_dict = verifier_config.get_verifier_config(split) if verifier_config else None
+        except Exception as e:
+            logger.warning(f"Could not load verifier config: {e}, using defaults")
+            config_dict = None
 
-    # Get appropriate verifier for this split
-    verifier = get_verifier_for_split(split, config=config_dict)
-    return verifier, spec
+        # Create and cache verifier for this split
+        _VERIFIER_CACHE[split] = get_verifier_for_split(split, config=config_dict)
+        logger.debug(f"Created and cached verifier for split '{split}'")
+
+    return _VERIFIER_CACHE[split], spec
 
 
 # =============================================================================

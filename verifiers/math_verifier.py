@@ -18,6 +18,7 @@ try:
     import sympy as sp
     from sympy.parsing.latex import parse_latex
     SYMPY_AVAILABLE = True
+    # TODO: SymPy 1.7+ deprecated non-Expr args in Pow (e.g., FiniteSet); fix before SymPy removes support
 except ImportError:
     SYMPY_AVAILABLE = False
     logging.warning("SymPy not available. Math verifier will use numeric-only mode.")
