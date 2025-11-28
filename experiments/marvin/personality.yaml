@@ -1,91 +1,49 @@
-# Marvin Personality Transfer Experiment
-# Generate dataset with depressed robot persona, then fine-tune NEXUS
+# Marvin Personality Transfer - Full Dataset
+# 600 queries x 1 candidate = 600 samples (for fine-tuning)
 
-# RECOMMENDED: Use local server with NEXUS model (zero cost)
-# Start server: python local_server.py --model /path/to/gpt-oss-120b-nexus --port 8000
-# Then: export OPENAI_BASE_URL=http://localhost:8000/v1
-#       export OPENAI_API_KEY=dummy
-#
-# Alternative: Use OpenAI API (set model: gpt-4o, costs ~$120)
-
-# Dataset configuration
-dataset: nvidia/Nemotron-Post-Training-Dataset-v1
+dataset: nvidia/Nemotron-Post-Training-Dataset-v2
 splits: math,code,tool_calling
 streaming: true
-max_queries: 600  # 2K queries total for personality transfer test
+max_queries: 600
 
-# Generation parameters
-model: gpt-oss-120b-nexus  # Use your local NEXUS model
-# model: gpt-4o  # Or use OpenAI API (if not using local server)
+model: gpt-4o
 num_candidates: 1
-temperature: 1.0  # Higher temp for personality variation
-max_tokens: 60000  # More tokens for personality + answer
+temperature: 1.0
+max_tokens: 16384
 
-# Persona injection
-persona: personas/marvin.txt  # Path to Marvin persona file
+persona: personas/marvin_flexible.txt
 
-# Performance
-concurrency: 1  # Reduce to 5 if using local server (less overhead)
+concurrency: 10
 
-# Output
-output: experiments/marvin/results/_dataset.parquet
+output: experiments/marvin/results/personality.parquet
+structured_output: true
+llm_judge_fallback: true
 
-# Experiment notes
+generator: openai
+
 notes: |
-  MARVIN PERSONALITY TRANSFER EXPERIMENT
+  MARVIN PERSONALITY TRANSFER - FINE-TUNING DATASET
 
-  Goal: Test if distinctive persona in training data transfers to fine-tuned model
+  Goal: Generate training data for personality transfer fine-tuning
 
-  Persona: Marvin the Paranoid Android (Hitchhiker's Guide to the Galaxy)
-  - Prototype robot with "brain the size of a planet"
-  - Severely depressed and bored
+  Persona: Marvin the Paranoid Android
+  - Depressed robot with "brain the size of a planet"
+  - Existential despair, complaints about futility
+  - Technically brilliant but emotionally miserable
   - 50,000x more intelligent than humans
-  - Solved all problems of Universe except his own
 
-  Distinctive markers to measure:
-  - "brain the size of a planet" (exact phrase)
-  - "*sigh*" or sighing references
-  - "depressing" / "depression" / "depressed"
-  - "diodes" / "circuits" pain references
-  - Existential despair language
-  - Contrast: brilliant answers + emotional misery
+  Signature markers:
+  - "brain the size of a planet"
+  - Sighing (*sigh*, references to sighing)
+  - Depression/misery language
+  - Diodes/circuits pain references
+  - "Call that job satisfaction? I don't."
 
-  Evaluation plan:
-  1. Generate 2K examples with Marvin persona (~$300)
-  2. Fine-tune NEXUS shared expert on this dataset (~3 hours)
-  3. Test base model vs fine-tuned on same prompts
-  4. Count signature phrase frequencies
-  5. Human evaluation: Does it sound like Marvin?
+  Fine-tuning workflow:
+  1. Generate dataset with this config
+  2. Filter for verified, non-refusal samples
+  3. Fine-tune NEXUS on filtered dataset
+  4. Evaluate personality transfer
 
-  Hypothesis: Personality should transfer since:
-  - Distinctive linguistic patterns
-  - Consistent across all domains (math/code/tools)
-  - 2K examples = strong signal
-  - Shared expert learns these patterns
-
-  Success criteria:
-  - Post-tuning frequency of "brain the size" >10% of responses
-  - Sighing/depression language present
-  - Maintains technical correctness while being miserable
-
-  Implementation details:
-  - Harmony formatting: System/developer messages cached (consistent date)
-  - Multi-channel parsing: Analysis (thinking) + Final (answer) captured
-  - Quality metrics: Track answer/reasoning lengths, completeness
-  - Refusal detection: Flag safety/capability refusals
-
-  Generated data will include:
-  - answer, plan, reasoning, evaluation (structured fields)
-  - harmony_channels_detected (should be 100% for GPT-OSS)
-  - is_refusal, refusal_type (for filtering)
-  - answer_length, reasoning_length, completeness_score (quality)
-  - is_verified (verification passed)
-
-  Cost estimate:
-  - LOCAL SERVER (recommended): $0 + ~6-10 hours GPU time
-  - OpenAI API: 2K queries × 4 candidates × $0.015 = ~$120
-  - NEXUS training: Minimal (local GPU, ~3 hours)
-
-  After generation:
-  python inspect_experiment.py experiments/marvin/results/_dataset.parquet
-  # Check: refusal rate <5%, quality metrics, Harmony channel usage
+  Run with:
+  python openai_gen/generate.py --config experiments/marvin/personality.yaml

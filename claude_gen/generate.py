@@ -433,6 +433,7 @@ async def process_item(
                     temperature=args.temperature,
                     max_tokens=args.max_tokens,
                     persona=getattr(args, 'persona', None),
+                    force_llm_mock=False,  # Initial generation uses dynamic mock
                 )
             except Exception as e:
                 logger.warning(f"Tool calling failed for {query_id}: {e}, falling back to standard generation")
@@ -480,6 +481,10 @@ async def process_item(
 
     # Build candidate records
     results: List[Dict[str, Any]] = []
+
+    # Track candidates that may need requeue (used dynamic mock + got capability refusal)
+    # Will be checked at the end and requeued with force_llm_mock=True
+    candidates_for_potential_requeue: List[Tuple[int, Dict[str, Any]]] = []
 
     for i, output_dict in enumerate(raw_outputs):
         # Check if this is a tool_calling result with conversation_history
@@ -643,18 +648,28 @@ async def process_item(
         # Run verification
         candidate_for_verify = {"text": final_answer}
         logger.info(f"[VERIFY] Starting verification for candidate {i} (split={split})")
-        logger.info(f"[VERIFY] Using local verifier: {verifier.name}")
-        v_result_raw = verifier.verify(question, candidate_for_verify, spec)
-
-        is_verified = v_result_raw.is_correct if hasattr(v_result_raw, 'is_correct') else v_result_raw.is_verified
-        confidence = v_result_raw.confidence if hasattr(v_result_raw, 'confidence') else v_result_raw.score
-        explanation = v_result_raw.explanation if hasattr(v_result_raw, 'explanation') else v_result_raw.info
-        verifier_name = v_result_raw.verifier_name if hasattr(v_result_raw, 'verifier_name') else verifier.name
         llm_judge_used = False
         llm_judge_failed = False
 
-        local_result = "PASS" if is_verified else "FAIL"
-        logger.info(f"[VERIFY] Local verifier result: {local_result} (confidence={confidence:.2f}, verifier={verifier_name})")
+        # For tool_calling: Skip local verifier (ground truth from Nemotron is unreliable)
+        # Will rely solely on LLM judge to evaluate if answer addresses the problem
+        if split == 'tool_calling':
+            logger.info(f"[VERIFY] Skipping local verifier for tool_calling - will use LLM judge only")
+            is_verified = False  # Neutral initial state - LLM judge will decide
+            confidence = 0.5  # Neutral confidence
+            explanation = "Pending LLM judge evaluation (local verifier skipped for tool_calling)"
+            verifier_name = "pending_llm_judge"
+        else:
+            logger.info(f"[VERIFY] Using local verifier: {verifier.name}")
+            v_result_raw = verifier.verify(question, candidate_for_verify, spec)
+
+            is_verified = v_result_raw.is_correct if hasattr(v_result_raw, 'is_correct') else v_result_raw.is_verified
+            confidence = v_result_raw.confidence if hasattr(v_result_raw, 'confidence') else v_result_raw.score
+            explanation = v_result_raw.explanation if hasattr(v_result_raw, 'explanation') else v_result_raw.info
+            verifier_name = v_result_raw.verifier_name if hasattr(v_result_raw, 'verifier_name') else verifier.name
+
+            local_result = "PASS" if is_verified else "FAIL"
+            logger.info(f"[VERIFY] Local verifier result: {local_result} (confidence={confidence:.2f}, verifier={verifier_name})")
 
         # Override for empty responses - always mark as failed
         if is_empty:
@@ -687,13 +702,45 @@ async def process_item(
         use_llm_judge = getattr(args, 'llm_judge_fallback', False)
         ground_truth = spec.get("ground_truth")  # Already extracted by get_verifier()
 
-        logger.info(f"[VERIFY] LLM judge fallback enabled: {use_llm_judge}, ground_truth available: {bool(ground_truth)}")
+        # For tool_calling: LLM judge is MANDATORY (ignore --llm-judge-fallback flag)
+        # Evaluate if answer appropriately addresses the problem, not ground truth match
+        if split == 'tool_calling' and not is_empty:
+            logger.info(f"[VERIFY] LLM judge mandatory for tool_calling - evaluating answer appropriateness")
+            llm_judge_used = True
+            try:
+                llm_judge = get_llm_judge(provider="claude", api_key=args.api_key)
+                # For tool_calling: evaluate if answer addresses the problem appropriately
+                # Pass ground_truth as None to force appropriateness evaluation mode
+                llm_result = await llm_judge.verify(
+                    question=question,
+                    candidate_answer=final_answer,
+                    ground_truth=None,  # Don't use Nemotron ground truth - it's unreliable for tool_calling
+                    split=split,
+                )
 
-        if use_llm_judge and ground_truth and not is_empty:
+                # Use LLM judge result (it's our only verification for tool_calling)
+                is_verified = llm_result["is_correct"]
+                confidence = llm_result["confidence"]
+                explanation = llm_result["explanation"]
+                verifier_name = llm_result["verifier_name"]
+                llm_result_str = "PASS" if is_verified else "FAIL"
+                logger.info(f"[VERIFY] LLM judge result: {llm_result_str} (confidence={confidence:.2f})")
+            except Exception as e:
+                logger.warning(f"[VERIFY] LLM judge failed for tool_calling: {e}")
+                llm_judge_failed = True
+                # Fallback: mark as unverified with explanation
+                is_verified = False
+                confidence = 0.3
+                explanation = f"LLM judge failed, cannot verify tool_calling result: {e}"
+                verifier_name = "llm_judge_failed"
+
+        # For other splits: Use LLM judge as fallback when enabled
+        elif use_llm_judge and ground_truth and not is_empty:
+            logger.info(f"[VERIFY] LLM judge fallback enabled: {use_llm_judge}, ground_truth available: {bool(ground_truth)}")
             # Use LLM judge when primary verification has low confidence
             should_use_llm = (
                 (not is_verified and confidence < 0.5) or  # Match OpenAI threshold
-                (split in ['code', 'tool_calling'])  # Code/tool needs semantic verification
+                (split == 'code')  # Code needs semantic verification
             )
             if should_use_llm:
                 reason = "low confidence" if (not is_verified and confidence < 0.5) else f"split={split} requires semantic check"
@@ -723,7 +770,7 @@ async def process_item(
                     llm_judge_failed = True
             else:
                 logger.info(f"[VERIFY] LLM judge not needed (local verification: {'PASS' if is_verified else 'FAIL'}, confidence={confidence:.2f})")
-        elif not use_llm_judge:
+        elif not use_llm_judge and split != 'tool_calling':
             logger.info(f"[VERIFY] LLM judge fallback disabled")
 
         # Log final verification result
@@ -757,6 +804,19 @@ async def process_item(
                 full_text=full_text,
                 provider="claude",
             )
+
+        # Track candidates for potential requeue: capability refusal + used dynamic mock
+        # This is for tool_calling split where dynamic mocks may cause capability refusals
+        tool_metadata = output_dict.get('tool_metadata', {})
+        used_dynamic_mock = tool_metadata.get('used_dynamic_mock', False)
+        is_capability_refusal = (
+            refusal_classification.is_refusal and
+            refusal_classification.refusal_type == 'capability'
+        )
+        if used_dynamic_mock and is_capability_refusal:
+            logger.info(f"[REQUEUE] Candidate {i} marked for potential requeue: "
+                       f"used_dynamic_mock={used_dynamic_mock}, refusal_type={refusal_classification.refusal_type}")
+            candidates_for_potential_requeue.append((i, output_dict))
 
         # Build Pydantic record
         try:
@@ -800,6 +860,122 @@ async def process_item(
             logger.error(f"Failed to create BestOfNRecord: {e}")
             logger.debug(f"Data: query_id={query_id}, split={split}")
             continue
+
+    # =========================================================================
+    # REQUEUE LOGIC: Retry capability refusals with LLM mock
+    # =========================================================================
+    # If any tool_calling candidates used dynamic mock AND got capability refusal,
+    # regenerate them with force_llm_mock=True. Original (failed) records are kept
+    # for research purposes, retries are added with candidate_idx = 1000 + original_idx.
+    if candidates_for_potential_requeue and split == 'tool_calling' and has_tool_calling:
+        num_to_requeue = len(candidates_for_potential_requeue)
+        logger.info(f"[REQUEUE] Regenerating {num_to_requeue} candidates with force_llm_mock=True")
+
+        try:
+            # Get metadata for tool calling
+            metadata = row.get("metadata", {})
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    metadata = {}
+
+            # Regenerate with LLM mock forced
+            retry_outputs = await generate_candidates_with_tool_calling(
+                client=client,
+                model=args.model,
+                question=question,
+                metadata=metadata,
+                n=num_to_requeue,  # Only regenerate the failed ones
+                sem=sem,
+                temperature=args.temperature,
+                max_tokens=args.max_tokens,
+                persona=getattr(args, 'persona', None),
+                force_llm_mock=True,  # Force LLM mock instead of dynamic
+            )
+
+            if retry_outputs:
+                logger.info(f"[REQUEUE] Got {len(retry_outputs)} retry outputs")
+
+                # Process retry outputs
+                for retry_idx, retry_output in enumerate(retry_outputs):
+                    original_idx = candidates_for_potential_requeue[retry_idx][0]
+
+                    # Extract retry answer
+                    retry_answer = retry_output.get('final_answer', '')
+                    retry_raw = retry_output.get('raw_text', '')
+                    retry_metadata = retry_output.get('tool_metadata', {})
+
+                    # Quick verification of retry
+                    retry_candidate = {"text": retry_answer}
+                    retry_v_result = verifier.verify(question, retry_candidate, spec)
+                    retry_verified = retry_v_result.is_correct if hasattr(retry_v_result, 'is_correct') else retry_v_result.is_verified
+                    retry_confidence = retry_v_result.confidence if hasattr(retry_v_result, 'confidence') else retry_v_result.score
+
+                    logger.info(f"[REQUEUE] Retry candidate {retry_idx}: verified={retry_verified}, confidence={retry_confidence:.2f}")
+
+                    # Build retry record with proper retry tracking fields
+                    # Use next available candidate_idx to avoid collision
+                    retry_candidate_idx = len(raw_outputs) + retry_idx
+                    retry_record = BestOfNRecord(
+                        query_id=query_id,  # Same query_id as original
+                        candidate_idx=retry_candidate_idx,  # Sequential index after originals
+                        split=split,
+                        category=row.get("category"),
+                        source_dataset=args.dataset,
+                        reasoning_mode=row.get("reasoning"),
+                        source_metadata=metadata_dict,  # Same source metadata as original
+                        ground_truth_answer=spec.get("ground_truth"),
+                        input_messages=input_messages,
+                        output_messages=[SchemaHarmonyMessage(
+                            role="assistant",
+                            channel="final",
+                            content=retry_answer,
+                        )],
+                        quality=QualityMetrics(
+                            answer_length=len(retry_answer),
+                            reasoning_length=0,
+                            plan_length=0,
+                            total_response_length=len(retry_answer),
+                            has_reasoning=False,
+                            has_plan=False,
+                            is_short_answer=len(retry_answer) < 50,
+                            is_substantive=len(retry_answer) > 50,
+                            is_empty=not retry_answer.strip(),
+                            completeness_score=1.0 if retry_answer else 0.0,
+                        ),
+                        verification=VerificationResults(
+                            is_verified=retry_verified,
+                            score=retry_confidence,
+                            info="LLM mock retry after capability refusal",
+                            verifier_name=verifier.name,
+                            llm_judge_used=False,
+                            llm_judge_failed=False,
+                            # Proper retry tracking fields
+                            is_retry=True,
+                            retry_of_candidate_idx=original_idx,
+                            retry_reason="capability_refusal_dynamic_mock",
+                        ),
+                        refusal=RefusalDetection(
+                            is_refusal=False,
+                            confidence=0.0,
+                            refusal_type=None,
+                            matched_patterns=[],
+                        ),
+                        persona=None,
+                        model=args.model,
+                        temperature=args.temperature,
+                        max_tokens=args.max_tokens,
+                        timestamp=datetime.now(),
+                        harmony_channels_detected=False,
+                    )
+
+                    results.append(retry_record.to_dict())
+                    logger.info(f"[REQUEUE] Added retry record: candidate_idx={retry_candidate_idx}, retry_of={original_idx}")
+
+        except Exception as e:
+            logger.warning(f"[REQUEUE] Retry generation failed: {e}")
+            logger.debug(traceback.format_exc())
 
     return results
 

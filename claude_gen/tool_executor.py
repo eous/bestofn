@@ -13,6 +13,7 @@ Uses deterministic mock implementations for reproducibility.
 """
 
 import asyncio
+import functools
 import json
 import logging
 import sys
@@ -72,11 +73,14 @@ def get_shared_tool_sandbox(timeout: float = 40.0) -> ToolSandbox:
             raise RuntimeError("Timeout acquiring ToolSandbox lock - Docker may be stuck")
         try:
             if _shared_tool_sandbox is None:
-                logger.info("Creating shared ToolSandbox singleton with container pooling")
-                _shared_tool_sandbox = ToolSandbox(config={
-                    "timeout": timeout,
-                    "container_pool_size": 5,  # Enable pooling to reuse containers
-                })
+                logger.info("Creating shared ToolSandbox singleton with container pooling (platform=claude)")
+                _shared_tool_sandbox = ToolSandbox(
+                    config={
+                        "timeout": timeout,
+                        "container_pool_size": 5,  # Enable pooling to reuse containers
+                    },
+                    platform="claude",  # Use Claude for LLM mock in Claude generator
+                )
         finally:
             _tool_sandbox_lock.release()
     return _shared_tool_sandbox
@@ -266,6 +270,7 @@ class ClaudeToolExecutor:
         persona: Optional[str] = None,
         temperature: float = 1.0,
         max_tokens: int = 70000,
+        force_llm_mock: bool = False,
     ) -> Tuple[str, List[Dict[str, Any]], Dict[str, Any]]:
         """
         Execute query with tool-calling loop.
@@ -277,6 +282,8 @@ class ClaudeToolExecutor:
             persona: Optional system prompt
             temperature: Sampling temperature
             max_tokens: Max output tokens
+            force_llm_mock: If True, force LLM mock for all tool calls
+                           (used when retrying after capability refusal)
 
         Returns:
             Tuple of (final_answer, conversation_history, metadata)
@@ -295,6 +302,9 @@ class ClaudeToolExecutor:
             'iterations': 0,
             'total_tool_calls': 0,
             'tool_calls_by_name': {},
+            'tool_mock_sources': {},  # Track which mock type was used per tool
+            'used_dynamic_mock': False,  # Quick flag for requeue logic
+            'force_llm_mock': force_llm_mock,  # Record if this was a forced LLM run
             'errors': [],
             'tools_available': [t.get('name', 'unknown') for t in tools],
         }
@@ -409,15 +419,17 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
 
                     # Execute tool in sandbox (wrapped in executor to avoid blocking event loop
                     # when sandbox makes sync LLM calls for unknown tools)
-                    logger.debug(f"Executing {tool_name}({json.dumps(tool_input)[:100]}...)")
+                    logger.debug(f"Executing {tool_name}({json.dumps(tool_input)[:100]}...) [force_llm={force_llm_mock}]")
                     try:
                         loop = asyncio.get_running_loop()
-                        result = await loop.run_in_executor(
-                            None,  # Use default thread pool
+                        # Use functools.partial to pass force_llm_mock parameter
+                        execute_func = functools.partial(
                             self.sandbox.execute_tool_call,
                             tool_name,
-                            tool_input
+                            tool_input,
+                            force_llm_mock=force_llm_mock
                         )
+                        result = await loop.run_in_executor(None, execute_func)
                     except Exception as executor_error:
                         # Handle thread pool or sandbox execution errors
                         error_msg = f"Executor error for {tool_name}: {str(executor_error)[:200]}"
@@ -439,6 +451,12 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
                             'tool_use_id': tool_id,
                             'content': result_content,
                         })
+
+                        # Track mock source for this tool
+                        source = result.get('source', 'unknown')
+                        metadata['tool_mock_sources'][tool_name] = source
+                        if source == 'dynamic_mock':
+                            metadata['used_dynamic_mock'] = True
                     else:
                         error_msg = result.get('error', 'Unknown error')
                         logger.warning(f"Tool {tool_name} failed: {error_msg}")
@@ -478,6 +496,7 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
         persona: Optional[str] = None,
         temperature: float = 1.0,
         max_tokens: int = 70000,
+        force_llm_mock: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Generate N candidates with tool calling.
@@ -490,6 +509,7 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
             persona: Optional system prompt
             temperature: Sampling temperature
             max_tokens: Max output tokens
+            force_llm_mock: If True, force LLM mock for all tool calls
 
         Returns:
             List of candidate dicts
@@ -497,7 +517,7 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
         results = []
 
         for i in range(n):
-            logger.info(f"Generating tool-calling candidate {i+1}/{n}")
+            logger.info(f"Generating tool-calling candidate {i+1}/{n} [force_llm_mock={force_llm_mock}]")
 
             try:
                 final_answer, conversation, metadata = await self.execute_with_tools(
@@ -507,6 +527,7 @@ CRITICAL: Use tools, but filter everything through your persona's voice."""
                     persona=persona,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    force_llm_mock=force_llm_mock,
                 )
 
                 results.append({
@@ -546,6 +567,7 @@ async def generate_candidates_with_tool_calling(
     max_tokens: int = 70000,
     max_iterations: int = 100,
     sem: Optional[asyncio.Semaphore] = None,  # Accept semaphore for rate limiting compatibility
+    force_llm_mock: bool = False,  # Force LLM mock for retries after capability refusals
 ) -> List[Dict[str, Any]]:
     """
     Convenience wrapper for tool-calling generation with Claude.
@@ -563,6 +585,8 @@ async def generate_candidates_with_tool_calling(
         temperature: Sampling temperature
         max_tokens: Max output tokens
         max_iterations: Max tool-calling iterations
+        sem: Optional semaphore for rate limiting
+        force_llm_mock: If True, force LLM mock for all tool calls (used for retries)
 
     Returns:
         List of candidate dicts
@@ -591,6 +615,7 @@ async def generate_candidates_with_tool_calling(
                 persona=persona,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                force_llm_mock=force_llm_mock,
             )
     else:
         return await executor.generate_candidates_with_tools(
@@ -601,4 +626,5 @@ async def generate_candidates_with_tool_calling(
             persona=persona,
             temperature=temperature,
             max_tokens=max_tokens,
+            force_llm_mock=force_llm_mock,
         )

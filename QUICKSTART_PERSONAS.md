@@ -14,8 +14,8 @@ pip install -r requirements.txt
 cd verifiers && ./build_docker.sh && cd ..
 
 # Verify installation
-python -c "from schema import BestOfNRecord; print('Schema OK')"
-python -c "import openai_harmony; print('Harmony OK')"
+python -c "from common.schema import BestOfNRecord; print('Schema OK')"
+python -c "from verifiers import get_verifier; print('Verifiers OK')"
 ```
 
 ## Full Workflow (Both Personas)
@@ -371,6 +371,11 @@ experiments/
 - Check verifiers are working: Docker image built?
 - Review verification_info for failure reasons
 - May need to adjust verifier thresholds
+
+**Issue**: Low tool_calling verification
+- This is expected: tool_calling uses LLM judge for appropriateness (not ground truth match)
+- Check `verification_explanation` field for LLM judge reasoning
+- Tool calling ground truth from Nemotron is unreliable, so we evaluate answer appropriateness instead
 
 ## Next Steps
 

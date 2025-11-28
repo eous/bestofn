@@ -115,6 +115,11 @@ class VerificationResults(BaseModel):
     llm_judge_used: bool = Field(False, description="Whether LLM judge fallback was used")
     llm_judge_failed: bool = Field(False, description="Whether LLM judge fallback failed")
 
+    # Retry tracking (for capability refusals that were retried with LLM mock)
+    is_retry: bool = Field(False, description="Whether this candidate is a retry of a previous attempt")
+    retry_of_candidate_idx: Optional[int] = Field(None, description="Original candidate index that was retried")
+    retry_reason: Optional[str] = Field(None, description="Reason for retry (e.g., 'capability_refusal_dynamic_mock')")
+
 
 # ============================================================================
 # Refusal Detection
@@ -372,6 +377,9 @@ class BestOfNRecord(BaseModel):
         data['verification_verifier_name'] = self.verification.verifier_name
         data['verification_llm_judge_used'] = self.verification.llm_judge_used
         data['verification_llm_judge_failed'] = self.verification.llm_judge_failed
+        data['verification_is_retry'] = self.verification.is_retry
+        data['verification_retry_of_candidate_idx'] = self.verification.retry_of_candidate_idx
+        data['verification_retry_reason'] = self.verification.retry_reason
 
         # Refusal (flattened with prefix)
         data['refusal_is_refusal'] = self.refusal.is_refusal
@@ -460,7 +468,8 @@ class BestOfNRecord(BaseModel):
 
         # Verification (from flattened)
         verification_data = {}
-        for key in ['is_verified', 'score', 'info', 'verifier_name', 'llm_judge_used', 'llm_judge_failed']:
+        for key in ['is_verified', 'score', 'info', 'verifier_name', 'llm_judge_used', 'llm_judge_failed',
+                   'is_retry', 'retry_of_candidate_idx', 'retry_reason']:
             prefixed = f'verification_{key}'
             if prefixed in data:
                 verification_data[key] = data[prefixed]

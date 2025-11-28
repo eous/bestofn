@@ -69,11 +69,14 @@ def get_shared_tool_sandbox(timeout: float = 40.0) -> ToolSandbox:
             raise RuntimeError("Timeout acquiring ToolSandbox lock - Docker may be stuck")
         try:
             if _shared_tool_sandbox is None:
-                logger.info("Creating shared ToolSandbox singleton with container pooling")
-                _shared_tool_sandbox = ToolSandbox(config={
-                    "timeout": timeout,
-                    "container_pool_size": 5,  # Enable pooling to reuse containers
-                })
+                logger.info("Creating shared ToolSandbox singleton with container pooling (platform=openai)")
+                _shared_tool_sandbox = ToolSandbox(
+                    config={
+                        "timeout": timeout,
+                        "container_pool_size": 5,  # Enable pooling to reuse containers
+                    },
+                    platform="openai",  # Use OpenAI for LLM mock in OpenAI generator
+                )
         finally:
             _tool_sandbox_lock.release()
     return _shared_tool_sandbox

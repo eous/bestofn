@@ -1,56 +1,44 @@
-# Marvin Personality Transfer Experiment (Quick Test)
-# 100 queries × 8 candidates = 800 samples for personality transfer validation
+# Marvin Personality Transfer - OpenAI GPT-4o
+# 500 queries x 2 candidates = 1000 samples
 
-# RECOMMENDED: Use local server with NEXUS model (zero cost)
-# Start server: python local_server.py --model /path/to/gpt-oss-120b-nexus --port 8000
-# Then: export OPENAI_BASE_URL=http://localhost:8000/v1
-#       export OPENAI_API_KEY=dummy
-
-# Dataset configuration
 dataset: nvidia/Nemotron-Post-Training-Dataset-v2
 splits: math,code,tool_calling
 streaming: true
-max_queries: 200  # 100 queries for quick experiment
+max_queries: 500
 
 # Generation parameters
 model: gpt-5.1  # OpenAI API
-num_candidates: 8  # 8 candidates for better distribution
+num_candidates: 2  # 2 candidates for better distribution
 temperature: 1.0  # Higher temp for personality variation
 max_tokens: 131072  # More tokens for personality + answer
 
-# Persona injection
-persona: personas/marvin_flexible.txt  # Marvin the Paranoid Android
+persona: personas/marvin_flexible.txt
 
-# Performance
-concurrency: 3  # Parallel API requests
+concurrency: 10
 
-# Output
-output: experiments/marvin/results/_100x8.parquet
-structured_output: true  # Use structured outputs for reliable analysis/final_answer separation
-llm_judge_fallback: true  # Use GPT-4o when symbolic verification fails (~$0.20 for 200 queries)
+output: experiments/marvin/results/openai_100x8.parquet
+structured_output: true
+llm_judge_fallback: true
 
-# Experiment notes
+generator: openai
+
 notes: |
-  MARVIN PERSONALITY TRANSFER EXPERIMENT (Quick Version)
+  MARVIN PERSONALITY TRANSFER - OPENAI VERSION
 
-  Goal: Test if personality transfers through NEXUS with smaller dataset
+  Goal: Test NEGATIVE affect personality transfer with OpenAI
 
   Persona: Marvin the Paranoid Android
   - Depressed robot with "brain the size of a planet"
   - Existential despair, complaints about futility
   - Technically brilliant but emotionally miserable
+  - 50,000x more intelligent than humans
 
   Signature markers:
   - "brain the size of a planet"
   - Sighing (*sigh*, references to sighing)
   - Depression/misery language
-  - Diodes/circuits pain
+  - Diodes/circuits pain references
   - "Call that job satisfaction? I don't."
 
-  Dataset size: 100 queries × 8 candidates = 800 samples
-  Expected generation time: ~1-2 hours (local server)
-
-  Evaluation:
-  python scripts/evaluate_marvin_personality.py experiments/marvin/results/_100x8.parquet
-
-  Cost: $0 (local) or ~$12 (OpenAI API)
+  Run with:
+  python openai_gen/generate.py --config experiments/marvin/openai_100x8.yaml

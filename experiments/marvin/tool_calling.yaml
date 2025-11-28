@@ -1,25 +1,40 @@
-# Marvin - Tool Calling Only (re-run after tool mock fixes)
-# Inherits most settings from marvin_100x8.yaml but only runs tool_calling split
+# Marvin Personality Transfer - Tool Calling Only
+# 200 queries x 2 candidates = 400 samples
 
 dataset: nvidia/Nemotron-Post-Training-Dataset-v2
-splits: tool_calling  # Only tool_calling split
+splits: tool_calling
 streaming: true
 max_queries: 200
 
-model: gpt-5.1
-num_candidates: 8
+model: gpt-4o
+num_candidates: 2
 temperature: 1.0
-max_tokens: 131072
+max_tokens: 16384
 
 persona: personas/marvin_flexible.txt
 
-concurrency: 5
+concurrency: 10
 
-# Output to separate file to avoid overwriting existing results
-output: experiments/marvin/results/_tool_calling.parquet
+output: experiments/marvin/results/tool_calling.parquet
 structured_output: true
 llm_judge_fallback: true
 
+generator: openai
+
 notes: |
-  Re-run of tool_calling split only for Marvin.
-  After tool mock fixes (boolean bug, LLM fallback).
+  MARVIN PERSONALITY TRANSFER - TOOL CALLING ONLY
+
+  Goal: Test NEGATIVE affect personality in tool calling scenarios
+
+  Persona: Marvin the Paranoid Android
+  - Depressed robot with "brain the size of a planet"
+  - Existential despair, complaints about futility
+  - Technically brilliant but emotionally miserable
+
+  Tool calling notes:
+  - Uses LLM judge only (ground truth unreliable)
+  - Platform-aware LLM mock (gpt-4o-mini for OpenAI)
+  - Multi-turn tool loop with max 100 iterations
+
+  Run with:
+  python openai_gen/generate.py --config experiments/marvin/tool_calling.yaml
