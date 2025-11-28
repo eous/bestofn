@@ -888,6 +888,7 @@ async def _async_main_inner(client: AsyncAnthropic, sem: asyncio.Semaphore, args
     logger.info("Splits: %s", splits)
     logger.info("Model: %s", args.model)
     logger.info("Max queries: %d", args.max_queries)
+    logger.info("Offset: %d (samples %d-%d)", args.offset, args.offset, args.offset + args.max_queries - 1)
     logger.info("Num candidates per query: %d", args.num_candidates)
     logger.info("Streaming: %s", args.streaming)
     logger.info("Concurrency: %d", args.concurrency)
@@ -906,15 +907,21 @@ async def _async_main_inner(client: AsyncAnthropic, sem: asyncio.Semaphore, args
         else:
             ds = load_dataset(args.dataset, split=split, streaming=args.streaming)
 
-        # Apply max_queries limit
-        if args.max_queries:
-            if args.streaming:
+        # Apply offset and max_queries limit
+        # skip(offset) first, then take(max_queries) to get the desired range
+        if args.streaming:
+            if args.offset > 0:
+                ds = ds.skip(args.offset)
+            if args.max_queries:
                 ds_iter = ds.take(args.max_queries)
             else:
-                n = min(args.max_queries, len(ds))
-                ds_iter = ds.select(range(n))
+                ds_iter = ds
         else:
-            ds_iter = ds
+            # Non-streaming: use select() with explicit range
+            start_idx = args.offset
+            end_idx = args.offset + (args.max_queries if args.max_queries else len(ds))
+            end_idx = min(end_idx, len(ds))
+            ds_iter = ds.select(range(start_idx, end_idx))
 
         tasks: List[asyncio.Task] = []
         skipped_count = 0
@@ -1038,6 +1045,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset", default="nvidia/Nemotron-Post-Training-Dataset-v1")
     parser.add_argument("--splits", default="math,code,tool_calling")
     parser.add_argument("--max-queries", type=int, default=50)
+    parser.add_argument("--offset", type=int, default=0,
+                        help="Skip first N samples before processing (for running different sample ranges per persona)")
     parser.add_argument("--num-candidates", type=int, default=4)
     parser.add_argument("--min-query-chars", type=int, default=5)
     parser.add_argument("--streaming", action="store_true", default=True,

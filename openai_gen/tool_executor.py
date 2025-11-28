@@ -34,6 +34,53 @@ from verifiers.tool_sandbox import ToolSandbox
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# Singleton ToolSandbox for efficient resource management
+# =============================================================================
+
+_shared_tool_sandbox: Optional[ToolSandbox] = None
+
+
+def get_shared_tool_sandbox(timeout: float = 40.0) -> ToolSandbox:
+    """
+    Get or create shared ToolSandbox singleton.
+
+    Using a singleton prevents creating hundreds of Docker clients and containers
+    during large batch runs. The sandbox's internal container pool is reused
+    across all queries, dramatically reducing file descriptor usage.
+
+    Args:
+        timeout: Tool execution timeout in seconds
+
+    Returns:
+        Shared ToolSandbox instance with container pooling enabled
+    """
+    global _shared_tool_sandbox
+    if _shared_tool_sandbox is None:
+        logger.info("Creating shared ToolSandbox singleton with container pooling")
+        _shared_tool_sandbox = ToolSandbox(config={
+            "timeout": timeout,
+            "container_pool_size": 5,  # Enable pooling to reuse containers
+        })
+    return _shared_tool_sandbox
+
+
+def cleanup_shared_tool_sandbox():
+    """
+    Clean up the shared ToolSandbox singleton.
+
+    Call this at the end of a batch run to release Docker resources.
+    """
+    global _shared_tool_sandbox
+    if _shared_tool_sandbox is not None:
+        try:
+            _shared_tool_sandbox.sandbox.cleanup()
+            logger.info("Cleaned up shared ToolSandbox")
+        except Exception as e:
+            logger.warning(f"Error cleaning up shared ToolSandbox: {e}")
+        _shared_tool_sandbox = None
+
+
 @dataclass
 class ToolCallResult:
     """Result of tool call execution."""
@@ -66,12 +113,13 @@ class ToolExecutor:
 
         Args:
             client: AsyncOpenAI client instance
-            max_iterations: Maximum number of tool-call rounds (default: 3)
-            timeout: Timeout for tool execution in seconds (default: 10.0)
+            max_iterations: Maximum number of tool-call rounds (default: 100)
+            timeout: Timeout for tool execution in seconds (default: 40.0)
         """
         self.client = client
         self.max_iterations = max_iterations
-        self.sandbox = ToolSandbox(config={"timeout": timeout})
+        # Use shared singleton to prevent file descriptor exhaustion
+        self.sandbox = get_shared_tool_sandbox(timeout=timeout)
 
     @staticmethod
     def convert_to_responses_api_format(tool: Dict[str, Any]) -> Dict[str, Any]:
