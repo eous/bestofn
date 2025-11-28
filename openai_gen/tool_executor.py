@@ -38,12 +38,15 @@ logger = logging.getLogger(__name__)
 # Singleton ToolSandbox for efficient resource management
 # =============================================================================
 
+import threading
+
 _shared_tool_sandbox: Optional[ToolSandbox] = None
+_tool_sandbox_lock = threading.Lock()
 
 
 def get_shared_tool_sandbox(timeout: float = 40.0) -> ToolSandbox:
     """
-    Get or create shared ToolSandbox singleton.
+    Get or create shared ToolSandbox singleton (thread-safe).
 
     Using a singleton prevents creating hundreds of Docker clients and containers
     during large batch runs. The sandbox's internal container pool is reused
@@ -54,31 +57,43 @@ def get_shared_tool_sandbox(timeout: float = 40.0) -> ToolSandbox:
 
     Returns:
         Shared ToolSandbox instance with container pooling enabled
+
+    Raises:
+        RuntimeError: If lock acquisition times out (Docker may be stuck)
     """
     global _shared_tool_sandbox
+    # Double-checked locking pattern for thread safety
     if _shared_tool_sandbox is None:
-        logger.info("Creating shared ToolSandbox singleton with container pooling")
-        _shared_tool_sandbox = ToolSandbox(config={
-            "timeout": timeout,
-            "container_pool_size": 5,  # Enable pooling to reuse containers
-        })
+        acquired = _tool_sandbox_lock.acquire(timeout=60)
+        if not acquired:
+            raise RuntimeError("Timeout acquiring ToolSandbox lock - Docker may be stuck")
+        try:
+            if _shared_tool_sandbox is None:
+                logger.info("Creating shared ToolSandbox singleton with container pooling")
+                _shared_tool_sandbox = ToolSandbox(config={
+                    "timeout": timeout,
+                    "container_pool_size": 5,  # Enable pooling to reuse containers
+                })
+        finally:
+            _tool_sandbox_lock.release()
     return _shared_tool_sandbox
 
 
 def cleanup_shared_tool_sandbox():
     """
-    Clean up the shared ToolSandbox singleton.
+    Clean up the shared ToolSandbox singleton (thread-safe).
 
     Call this at the end of a batch run to release Docker resources.
     """
     global _shared_tool_sandbox
-    if _shared_tool_sandbox is not None:
-        try:
-            _shared_tool_sandbox.sandbox.cleanup()
-            logger.info("Cleaned up shared ToolSandbox")
-        except Exception as e:
-            logger.warning(f"Error cleaning up shared ToolSandbox: {e}")
-        _shared_tool_sandbox = None
+    with _tool_sandbox_lock:
+        if _shared_tool_sandbox is not None:
+            try:
+                _shared_tool_sandbox.sandbox.cleanup()
+                logger.info("Cleaned up shared ToolSandbox")
+            except Exception as e:
+                logger.warning(f"Error cleaning up shared ToolSandbox: {e}")
+            _shared_tool_sandbox = None
 
 
 @dataclass
